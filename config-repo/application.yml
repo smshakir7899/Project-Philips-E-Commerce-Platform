@@ -1,0 +1,106 @@
+# ---------------------------------------------------------------------------------------------
+# Shared configuration served by config-server to EVERY client application.
+# Service-specific files (<spring.application.name>.yml) override these values.
+# ${VAR:default} placeholders are resolved by the CLIENT, using its own environment variables,
+# so the same file works for "mvn spring-boot:run" on localhost and inside Docker Compose.
+# ---------------------------------------------------------------------------------------------
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka/}
+    registry-fetch-interval-seconds: 5
+  instance:
+    prefer-ip-address: true
+    lease-renewal-interval-in-seconds: 10
+    instance-id: ${spring.application.name}:${random.value}
+
+# Services sit behind api-gateway, which adds X-Forwarded-Host/Proto/Port. "framework" makes Spring honour them, so
+# generated absolute URLs (springdoc "servers", Location headers) point at the gateway (http://localhost:8080) instead
+# of the container's internal IP:port. Without it "Try it out" in the aggregated Swagger UI calls an unreachable host.
+server:
+  forward-headers-strategy: framework
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,env,refresh,circuitbreakers,retries
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+  health:
+    circuitbreakers:
+      enabled: true
+  info:
+    env:
+      enabled: true
+
+spring:
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+          batch_size: 50
+        order_inserts: true
+        order_updates: true
+  datasource:
+    username: ${MYSQL_USER:philips}
+    password: ${MYSQL_PASSWORD:philips_pwd}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 5000
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    default-property-inclusion: non_null
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      acks: all
+      retries: 2147483647
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
+        delivery.timeout.ms: 30000
+        request.timeout.ms: 10000
+        linger.ms: 5
+    consumer:
+      group-id: ${spring.application.name}
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        max.poll.interval.ms: 300000
+    listener:
+      ack-mode: record
+      missing-topics-fatal: false
+
+app:
+  kafka:
+    topic:
+      partitions: 3
+      replicas: 1
+    retry:
+      interval-ms: 1000
+      max-attempts: 3
+
+logging:
+  pattern:
+    level: "%5p [${spring.application.name:},%X{correlationId:-}]"
+  level:
+    com.philips.ecommerce: INFO
+    org.apache.kafka: WARN
+    org.hibernate.SQL: WARN

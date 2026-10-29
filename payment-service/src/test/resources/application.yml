@@ -1,0 +1,80 @@
+# Self-contained test configuration (shadows src/main/resources/application.yml on the test classpath):
+# no config-server, no Eureka, no MySQL, no Flyway. Kafka only where a test starts an embedded broker.
+server:
+  port: 0
+
+spring:
+  application:
+    name: payment-service
+  cloud:
+    config:
+      enabled: false
+      import-check:
+        enabled: false
+  datasource:
+    # Unique in-memory database per Spring context, MySQL compatibility mode.
+    url: jdbc:h2:mem:payment-${random.uuid};MODE=MySQL;DATABASE_TO_LOWER=TRUE
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: create-drop
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: false
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    default-property-inclusion: non_null
+  kafka:
+    # Overridden with the embedded broker address in Kafka tests.
+    bootstrap-servers: ${spring.embedded.kafka.brokers:localhost:9092}
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+    consumer:
+      group-id: payment-service
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    listener:
+      ack-mode: record
+      missing-topics-fatal: false
+
+eureka:
+  client:
+    enabled: false
+
+app:
+  payment:
+    simulation:
+      max-amount: 5000.00
+      timeout-delay-ms: 50
+      random-failure-rate: 0.0
+  outbox:
+    enabled: false
+    fetch-mode: SIMPLE
+    poll-interval-ms: 200
+    max-attempts: 10
+    send-timeout-ms: 5000
+  kafka:
+    topic:
+      partitions: 3
+      replicas: 1
+    retry:
+      interval-ms: 100
+      max-attempts: 1
+
+logging:
+  level:
+    com.philips.ecommerce: INFO
+    org.apache.kafka: WARN
+    kafka: WARN
+    org.apache.zookeeper: WARN

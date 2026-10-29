@@ -1,0 +1,20 @@
+# Only bootstrap settings live here (docs/CONTRACTS.md section 3).
+# Everything else is served by config-server from config-repo/application.yml + config-repo/inventory-service.yml.
+server:
+  port: 8082
+
+spring:
+  application:
+    name: inventory-service
+  config:
+    import: "configserver:${CONFIG_SERVER_URL:http://localhost:8888}"
+  cloud:
+    config:
+      # Refuse to start with missing configuration instead of silently running on defaults.
+      fail-fast: true
+      # With fail-fast, retry (spring-retry + aop) so the service survives config-server starting a bit later.
+      retry:
+        initial-interval: 2000
+        multiplier: 1.5
+        max-interval: 10000
+        max-attempts: 20

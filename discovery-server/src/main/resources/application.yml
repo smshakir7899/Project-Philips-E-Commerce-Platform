@@ -1,0 +1,40 @@
+server:
+  port: 8761
+
+spring:
+  application:
+    name: discovery-server
+
+eureka:
+  instance:
+    hostname: ${EUREKA_HOSTNAME:localhost}
+  client:
+    # Single standalone node: it must not try to register with / copy the registry from a peer (itself).
+    # In a production HA setup you run 2-3 peers and point each one's defaultZone at the others.
+    register-with-eureka: false
+    fetch-registry: false
+    service-url:
+      defaultZone: http://${eureka.instance.hostname}:${server.port}/eureka/
+  server:
+    # Self-preservation: when Eureka receives fewer heartbeats than expected (e.g. >15% missing) it assumes a
+    # NETWORK problem rather than dead instances and stops evicting anyone. In production that is a good safety net
+    # (a network partition does not wipe the registry). Locally, where services are stopped/restarted all the time,
+    # it would keep dead instances listed, so the gateway keeps routing to them. Hence disabled for dev only.
+    enable-self-preservation: false
+    # Run the eviction task more often than the 60s default so stopped services disappear quickly in dev.
+    eviction-interval-timer-in-ms: 5000
+    # A standalone node has no peers to wait for at startup.
+    wait-time-in-ms-when-sync-empty: 0
+    # Clients receive registry deltas from this cache; refresh it faster than the 30s default for dev.
+    response-cache-update-interval-ms: 3000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true

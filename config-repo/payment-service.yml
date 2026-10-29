@@ -1,0 +1,31 @@
+# ---------------------------------------------------------------------------------------------
+# payment-service specific configuration (served by config-server; overrides application.yml).
+# NOTE: payments are SIMULATED - there is no real payment-provider integration.
+# ---------------------------------------------------------------------------------------------
+spring:
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/philips_payment?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+
+app:
+  payment:
+    simulation:
+      # Amounts above this are declined with AMOUNT_LIMIT_EXCEEDED.
+      max-amount: 5000.00
+      # tok_timeout sleeps this long, i.e. longer than order-service's 3 s Feign read timeout.
+      timeout-delay-ms: 6000
+      # 0.0 = deterministic; e.g. 0.2 declines 20 % of otherwise valid payments (chaos experiments).
+      random-failure-rate: 0.0
+  outbox:
+    enabled: true
+    poll-interval-ms: 1000
+    batch-size: 50
+    max-attempts: 10
+    send-timeout-ms: 10000
+    # SKIP_LOCKED = SELECT ... FOR UPDATE SKIP LOCKED (MySQL 8, safe with several instances).
+    fetch-mode: SKIP_LOCKED
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+  api-docs:
+    path: /v3/api-docs

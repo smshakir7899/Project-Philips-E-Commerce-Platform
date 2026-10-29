@@ -1,0 +1,22 @@
+# Bootstrap-only configuration (see docs/CONTRACTS.md section 3).
+# Everything else (datasource, Redis, S3, cache TTLs, query mode) is served by config-server from
+# config-repo/product-service.yml (+ product-service-baseline.yml when the 'baseline' profile is active).
+server:
+  port: 8081
+
+spring:
+  application:
+    name: product-service
+  config:
+    import: "configserver:${CONFIG_SERVER_URL:http://localhost:8888}"
+  cloud:
+    config:
+      # Refuse to start without configuration instead of silently running with defaults.
+      fail-fast: true
+      # In Docker Compose the config-server may still be booting: retry with exponential back-off
+      # (requires spring-retry + spring-boot-starter-aop on the classpath).
+      retry:
+        initial-interval: 1000
+        multiplier: 1.5
+        max-interval: 10000
+        max-attempts: 20

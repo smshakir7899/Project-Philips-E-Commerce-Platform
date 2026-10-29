@@ -1,0 +1,33 @@
+# ---------------------------------------------------------------------------------------------
+# inventory-service specific configuration (overrides config-repo/application.yml).
+# ---------------------------------------------------------------------------------------------
+spring:
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/philips_inventory?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    hikari:
+      pool-name: inventory-hikari
+  kafka:
+    listener:
+      # One consumer thread per partition of order-confirmed / order-cancelled (3 partitions each).
+      # More threads than partitions would sit idle; fewer would serialise partitions on one thread.
+      concurrency: 3
+
+app:
+  inventory:
+    # A reservation that is neither committed nor released within this time is returned to stock by the expiry job.
+    # It protects stock from being locked forever when order-service crashes mid-saga or an event is lost.
+    reservation-ttl-minutes: 15
+    expiry-job-enabled: true
+    expiry-job-interval-ms: 60000
+    # Reservations expired per transaction batch (keeps transactions and lock time short).
+    expiry-batch-size: 100
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  level:
+    com.philips.ecommerce.inventory: INFO

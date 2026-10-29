@@ -1,0 +1,19 @@
+# Only bootstrap settings live here; everything else is served by config-server
+# (config-repo/application.yml + config-repo/payment-service.yml).
+server:
+  port: 8085
+
+spring:
+  application:
+    name: payment-service
+  config:
+    import: "configserver:${CONFIG_SERVER_URL:http://localhost:8888}"
+  cloud:
+    config:
+      fail-fast: true
+      # Keep retrying while config-server is still starting (needs spring-retry + spring-boot-starter-aop).
+      retry:
+        initial-interval: 2000
+        multiplier: 1.5
+        max-interval: 10000
+        max-attempts: 20

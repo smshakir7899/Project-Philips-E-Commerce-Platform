@@ -1,0 +1,40 @@
+# ---- Build output ----
+target/
+**/target/
+dependency-reduced-pom.xml
+# Maven wrapper: the scripts and properties ARE committed; downloaded jars/distributions are not
+.mvn/wrapper/maven-wrapper.jar
+.mvn/wrapper/*.zip
+
+# ---- Secrets / local config (never commit) ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.jks
+
+# ---- IDE / OS ----
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.project
+.classpath
+.factorypath
+.sts4-cache/
+bin/
+out/
+.DS_Store
+Thumbs.db
+
+# ---- Logs / reports ----
+*.log
+logs/
+verify-report-*.txt
+# your own benchmark runs (the measured reference runs live in perf/results-reference/)
+perf/results/
+.scannerwork/

@@ -1,0 +1,341 @@
+# =============================================================================================
+# deploy/docker-compose.prod.yml - single-EC2 "production-like" deployment.
+#
+# IMPORTANT: this file is meant to run from /opt/philips-ecommerce ON THE EC2 INSTANCE, not from
+# the repository's deploy/ directory. Jenkins (Deploy to EC2 stage) copies this layout there:
+#
+#   /opt/philips-ecommerce/
+#     docker-compose.prod.yml          <- this file
+#     deploy.sh                        <- deploy/ec2/deploy.sh
+#     .env                             <- Jenkins secret file credential 'ec2-prod-env' (see deploy/ec2/env.prod.example)
+#     config-repo/                     <- repo root config-repo/ (served by config-server)
+#     docker/mysql/init/               <- 01-create-databases.sql (first start only)
+#     docker/mysql/grant-app-user.sh   <- run by the mysql-init one-shot service on every start
+#     docker/kafka/create-topics.sh
+#
+# Differences from the local docker-compose.yml:
+#   * Images are PULLED from the registry (${DOCKER_REGISTRY}/philips-ecommerce/<module>:${IMAGE_TAG}); no build.
+#   * No MinIO: product-service talks to real AWS S3 (S3_ENDPOINT empty, path-style off).
+#   * No AWS access keys: the AWS SDK default credential chain picks up the EC2 instance profile via IMDSv2.
+#     Containers sit one network hop behind the instance, so the IMDSv2 hop limit must be 2:
+#       aws ec2 modify-instance-metadata-options --instance-id i-xxx --http-put-response-hop-limit 2 --http-tokens required
+#   * Only api-gateway (8080) is published on all interfaces. discovery-server is bound to 127.0.0.1
+#     (reach the Eureka dashboard through an SSH tunnel: ssh -L 8761:localhost:8761 ec2-user@host).
+#     MySQL / Redis / Kafka / ZooKeeper / config-server are NOT published at all.
+#   * No kafka-ui, sonarqube or jenkins.
+#   * Log rotation (json-file 10m x 3) so container logs cannot fill the root volume.
+#
+# Healthchecks of the Java services come from the image's Dockerfile HEALTHCHECK
+# (curl -fsS http://localhost:<port>/actuator/health), so `condition: service_healthy` works for them too.
+#
+# Production hardening that this learning setup deliberately skips (mention in interviews):
+#   * MySQL in a container on the same host -> use Amazon RDS for MySQL (Multi-AZ, automated backups, PITR).
+#   * Redis -> ElastiCache; Kafka + ZooKeeper -> Amazon MSK (RF 3, min.insync.replicas 2).
+#   * Single instance = single point of failure -> ECS/EKS or an Auto Scaling group behind an ALB.
+#   * Secrets in .env -> AWS Secrets Manager / SSM Parameter Store.
+# =============================================================================================
+
+name: philips-ecommerce
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+# Settings shared by every Spring Boot service.
+x-java-service: &java-service
+  restart: unless-stopped
+  mem_limit: 400m
+  networks: [philips-net]
+  logging: *default-logging
+
+x-java-env: &java-env
+  JAVA_OPTS: "-Xms128m -Xmx256m -XX:+UseSerialGC"
+  CONFIG_SERVER_URL: http://config-server:8888
+  EUREKA_URL: http://discovery-server:8761/eureka/
+
+x-db-env: &db-env
+  MYSQL_HOST: mysql
+  MYSQL_PORT: "3306"
+  MYSQL_USER: ${MYSQL_USER:?MYSQL_USER must be set in .env}
+  MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD must be set in .env}
+
+# Business services start only after config + discovery + their infrastructure are ready.
+x-platform-deps: &platform-deps
+  config-server:
+    condition: service_healthy
+  discovery-server:
+    condition: service_healthy
+  mysql-init:
+    condition: service_completed_successfully
+
+networks:
+  philips-net:
+    name: philips-net
+
+volumes:
+  mysql-data:
+  redis-data:
+  zookeeper-data:
+  zookeeper-log:
+  kafka-data:
+
+services:
+  # ------------------------------------------------------------------ infrastructure ----------
+  mysql:
+    # NOTE: for real production use Amazon RDS for MySQL instead of a container on the app host.
+    image: mysql:8.0
+    restart: unless-stopped
+    # No --default-authentication-plugin: MySQL 8 default caching_sha2_password works with
+    # Connector/J because the JDBC URL sets allowPublicKeyRetrieval=true (see docs/CONTRACTS.md).
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD must be set in .env}
+      MYSQL_USER: ${MYSQL_USER:?MYSQL_USER must be set in .env}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD must be set in .env}
+      TZ: UTC
+    volumes:
+      - mysql-data:/var/lib/mysql
+      # Runs only on the FIRST start (empty data dir): 01-create-databases.sql creates the 6 databases.
+      # Grants are applied by the mysql-init service on every start.
+      - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # $$ escapes $ so the variable is expanded inside the container, not by compose.
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    mem_limit: 768m
+    networks: [philips-net]
+    logging: *default-logging
+
+  # One-shot job: creates schemas (if missing) and grants $MYSQL_USER on every start (idempotent).
+  mysql-init:
+    image: mysql:8.0
+    depends_on:
+      mysql: { condition: service_healthy }
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PWD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD must be set in .env}
+      APP_USER: ${MYSQL_USER:?MYSQL_USER must be set in .env}
+      APP_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD must be set in .env}
+    entrypoint: ["bash", "/init/grant-app-user.sh"]
+    volumes:
+      - ./docker/mysql/grant-app-user.sh:/init/grant-app-user.sh:ro
+    restart: "no"
+    networks: [philips-net]
+    logging: *default-logging
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # allkeys-lru: Redis is used purely as a cache, so evicting any key under memory pressure is safe.
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    mem_limit: 320m
+    networks: [philips-net]
+    logging: *default-logging
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.4
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      KAFKA_HEAP_OPTS: "-Xms128m -Xmx256m"
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-log:/var/lib/zookeeper/log
+    healthcheck:
+      # 'ruok' four-letter word is not whitelisted on cp images by default, so just check the port.
+      test: ["CMD-SHELL", "nc -z localhost 2181 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    mem_limit: 384m
+    networks: [philips-net]
+    logging: *default-logging
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.4
+    restart: unless-stopped
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      # Only the in-network listener: nothing outside the Docker network talks to Kafka in prod.
+      KAFKA_LISTENERS: PLAINTEXT://kafka:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      # Topics are created explicitly by kafka-init (3 partitions); typos must not create topics.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      # Single broker -> internal topics can only have RF 1 (MSK would use RF 3 / min ISR 2).
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:29092 --list >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+    mem_limit: 768m
+    networks: [philips-net]
+    logging: *default-logging
+
+  kafka-init:
+    # One-shot container: creates the 5 topics + 5 .DLT topics (idempotent: --if-not-exists), then exits 0.
+    image: confluentinc/cp-kafka:7.4.4
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["bash", "/scripts/create-topics.sh"]
+    environment:
+      KAFKA_BOOTSTRAP: kafka:29092
+    volumes:
+      - ./docker/kafka/create-topics.sh:/scripts/create-topics.sh:ro
+    restart: "no"
+    networks: [philips-net]
+    logging: *default-logging
+
+  # ------------------------------------------------------------------ platform ----------------
+  config-server:
+    <<: *java-service
+    image: ${DOCKER_REGISTRY:?DOCKER_REGISTRY must be set}/philips-ecommerce/config-server:${IMAGE_TAG:?IMAGE_TAG must be set}
+    environment:
+      JAVA_OPTS: "-Xms128m -Xmx256m -XX:+UseSerialGC"
+      CONFIG_REPO_LOCATION: file:/config-repo/
+    volumes:
+      - ./config-repo:/config-repo:ro
+
+  discovery-server:
+    <<: *java-service
+    image: ${DOCKER_REGISTRY}/philips-ecommerce/discovery-server:${IMAGE_TAG}
+    environment:
+      JAVA_OPTS: "-Xms128m -Xmx256m -XX:+UseSerialGC"
+      EUREKA_URL: http://discovery-server:8761/eureka/
+    ports:
+      # Loopback only: use an SSH tunnel to look at the Eureka dashboard.
+      - "127.0.0.1:8761:8761"
+
+  # ------------------------------------------------------------------ business services -------
+  product-service:
+    <<: *java-service
+    image: ${DOCKER_REGISTRY}/philips-ecommerce/product-service:${IMAGE_TAG}
+    depends_on:
+      <<: *platform-deps
+      redis:
+        condition: service_healthy
+    environment:
+      <<: [*java-env, *db-env]
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      AWS_REGION: ${AWS_REGION:-eu-west-1}
+      S3_BUCKET: ${S3_BUCKET:-philips-product-images}
+      # Empty endpoint => the AWS SDK uses the regional S3 endpoint (real AWS, not MinIO).
+      S3_ENDPOINT: ""
+      S3_PATH_STYLE_ACCESS: "false"
+      S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:?S3_PUBLIC_BASE_URL must be set in .env}
+      PRODUCT_QUERY_MODE: ${PRODUCT_QUERY_MODE:-optimized}
+      PRODUCT_CACHE_ENABLED: ${PRODUCT_CACHE_ENABLED:-true}
+      # Deliberately NO AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY here: credentials come from the
+      # EC2 instance profile (IAM role with deploy/iam/product-service-s3-policy.json).
+
+  inventory-service:
+    <<: *java-service
+    image: ${DOCKER_REGISTRY}/philips-ecommerce/inventory-service:${IMAGE_TAG}
+    depends_on:
+      <<: *platform-deps
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      <<: [*java-env, *db-env]
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+
+  cart-service:
+    <<: *java-service
+    image: ${DOCKER_REGISTRY}/philips-ecommerce/cart-service:${IMAGE_TAG}
+    depends_on:
+      <<: *platform-deps
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      <<: [*java-env, *db-env]
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+
+  order-service:
+    <<: *java-service
+    image: ${DOCKER_REGISTRY}/philips-ecommerce/order-service:${IMAGE_TAG}
+    depends_on:
+      <<: *platform-deps
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      <<: [*java-env, *db-env]
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+
+  payment-service:
+    <<: *java-service
+    image: ${DOCKER_REGISTRY}/philips-ecommerce/payment-service:${IMAGE_TAG}
+    depends_on:
+      <<: *platform-deps
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      <<: [*java-env, *db-env]
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+
+  notification-service:
+    <<: *java-service
+    image: ${DOCKER_REGISTRY}/philips-ecommerce/notification-service:${IMAGE_TAG}
+    depends_on:
+      <<: *platform-deps
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      <<: [*java-env, *db-env]
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+
+  # ------------------------------------------------------------------ edge --------------------
+  api-gateway:
+    <<: *java-service
+    image: ${DOCKER_REGISTRY}/philips-ecommerce/api-gateway:${IMAGE_TAG}
+    depends_on:
+      config-server:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+      product-service:
+        condition: service_healthy
+      inventory-service:
+        condition: service_healthy
+      cart-service:
+        condition: service_healthy
+      order-service:
+        condition: service_healthy
+      payment-service:
+        condition: service_healthy
+      notification-service:
+        condition: service_healthy
+    environment:
+      <<: *java-env
+    ports:
+      # The ONLY port reachable from outside (restrict it to the ALB security group - see deploy/aws/security-groups.md).
+      - "8080:8080"

@@ -1,0 +1,27 @@
+# ---------------------------------------------------------------------------------------------
+# notification-service (port 8086). Merged on top of config-repo/application.yml.
+# ---------------------------------------------------------------------------------------------
+spring:
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/philips_notification?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+  kafka:
+    listener:
+      # Threads per @KafkaListener container. Each main topic has 3 partitions, so 3 threads = one per partition
+      # (more threads than partitions would sit idle). The DLT listener overrides this with concurrency = 1.
+      concurrency: 3
+
+app:
+  notification:
+    recipient-domain: example.com
+    sender-address: no-reply@philips-shop.example
+    dlt-group-id: notification-service-dlt
+    failed-events-max-results: 200
+    simulation:
+      # Comma-separated customer ids whose notifications fail (retry + DLT demo). Can be changed at runtime with
+      # PUT /api/notifications/admin/simulated-failures {"customerIds":["CUST-FAIL"]}
+      failing-customer-ids: ${NOTIFICATION_FAILING_CUSTOMER_IDS:}
+
+logging:
+  level:
+    # Kafka retry/DLT activity is the interesting part of this service
+    org.springframework.kafka.listener: INFO

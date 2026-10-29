@@ -1,0 +1,71 @@
+# syntax=docker/dockerfile:1
+# =============================================================================================
+# ALTERNATIVE multi-stage build: compiles the module INSIDE Docker, so the CI agent only needs
+# Docker (no JDK/Maven). The per-module <module>/Dockerfile (copy a pre-built jar) stays the
+# primary path because Jenkins already runs Maven for tests, Sonar and JaCoCo.
+#
+# The build context must be the REPO ROOT (the module needs the parent pom + common-lib):
+#
+#   docker build -f docker/Dockerfile.multistage \
+#     --build-arg MODULE=product-service --build-arg PORT=8081 \
+#     -t philips-ecommerce/product-service:local .
+#
+# Requires BuildKit (default since Docker 23) for the --mount=type=cache Maven repository cache,
+# which keeps ~/.m2 between builds without baking it into a layer.
+# =============================================================================================
+
+ARG MODULE=product-service
+
+# ---- Stage 1: build ---------------------------------------------------------------------------
+FROM maven:3.9.9-eclipse-temurin-8 AS build
+ARG MODULE
+WORKDIR /workspace
+
+# Copy the poms first: if only Java sources change, this layer (and the dependency download
+# below) is reused from the cache. All module poms are needed because Maven resolves the whole
+# reactor from the parent pom. go-offline is BEST EFFORT (|| true): it cannot resolve the
+# not-yet-built common-lib snapshot, and the real build below downloads anything still missing.
+COPY pom.xml ./
+COPY common-lib/pom.xml common-lib/
+COPY config-server/pom.xml config-server/
+COPY discovery-server/pom.xml discovery-server/
+COPY api-gateway/pom.xml api-gateway/
+COPY product-service/pom.xml product-service/
+COPY inventory-service/pom.xml inventory-service/
+COPY cart-service/pom.xml cart-service/
+COPY order-service/pom.xml order-service/
+COPY payment-service/pom.xml payment-service/
+COPY notification-service/pom.xml notification-service/
+RUN --mount=type=cache,target=/root/.m2 \
+    mvn -B -q -pl "${MODULE}" -am dependency:go-offline -DexcludeArtifactIds=common-lib || true
+
+# Now the sources (see .dockerignore: target/, .git, IDE files are excluded from the context).
+COPY . .
+# -pl <module> -am builds the module and what it depends on (common-lib) only.
+# Tests are skipped here because the pipeline runs them in a dedicated stage with reports.
+RUN --mount=type=cache,target=/root/.m2 \
+    mvn -B -pl "${MODULE}" -am package -DskipTests \
+ && cp "${MODULE}/target/${MODULE}.jar" /workspace/app.jar
+
+# ---- Stage 2: runtime (same as the per-module Dockerfiles) -----------------------------------
+FROM eclipse-temurin:8-jre
+ARG MODULE
+ARG PORT=8080
+LABEL org.opencontainers.image.title="${MODULE}"
+
+RUN groupadd --system app && useradd --system --gid app --no-create-home --shell /usr/sbin/nologin app
+WORKDIR /app
+COPY --from=build --chown=app:app /workspace/app.jar app.jar
+USER app
+
+# ARG values are not visible at container runtime, so persist the port for the HEALTHCHECK.
+ENV SERVER_PORT_FOR_HEALTHCHECK=${PORT} \
+    JAVA_OPTS="-Xms128m -Xmx256m -XX:+UseSerialGC" \
+    TZ=UTC
+EXPOSE ${PORT}
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=90s --retries=5 \
+  CMD curl -fsS "http://localhost:${SERVER_PORT_FOR_HEALTHCHECK}/actuator/health" > /dev/null || exit 1
+
+# exec -> the JVM is PID 1 and receives SIGTERM directly (graceful shutdown), see module Dockerfiles.
+ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar /app/app.jar"]

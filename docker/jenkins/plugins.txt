@@ -1,0 +1,13 @@
+# Installed into the local Jenkins image by docker/jenkins/Dockerfile (jenkins-plugin-cli).
+workflow-aggregator
+git
+docker-workflow
+sonar
+ssh-agent
+junit
+jacoco
+credentials-binding
+ws-cleanup
+timestamper
+pipeline-utility-steps
+pipeline-stage-view

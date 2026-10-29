@@ -1,0 +1,64 @@
+# Self-contained test configuration: shadows src/main/resources/application.yml, needs no config-server,
+# Eureka, MySQL or Kafka broker (tests that need Kafka start an embedded broker).
+server:
+  port: 0
+
+spring:
+  application:
+    name: inventory-service
+  cloud:
+    config:
+      enabled: false
+  datasource:
+    # unique name per Spring context: cached contexts (slices, @SpringBootTest) must not share one in-memory DB
+    url: jdbc:h2:mem:inventory-${random.uuid};MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: create-drop
+  flyway:
+    enabled: false
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    default-property-inclusion: non_null
+  kafka:
+    # Set by @EmbeddedKafka; the fallback is only used by contexts that never connect.
+    bootstrap-servers: ${spring.embedded.kafka.brokers:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+    consumer:
+      group-id: ${spring.application.name}
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    listener:
+      ack-mode: record
+      missing-topics-fatal: false
+
+eureka:
+  client:
+    enabled: false
+
+app:
+  inventory:
+    reservation-ttl-minutes: 15
+    expiry-job-enabled: false
+  kafka:
+    topic:
+      partitions: 3
+      replicas: 1
+    retry:
+      interval-ms: 100
+      max-attempts: 3
+
+logging:
+  level:
+    org.apache.kafka: WARN
+    kafka: WARN
+    org.apache.zookeeper: WARN
+    state.change.logger: WARN

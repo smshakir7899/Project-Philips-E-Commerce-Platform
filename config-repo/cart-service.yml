@@ -1,0 +1,84 @@
+# ---------------------------------------------------------------------------------------------
+# cart-service specific configuration (overrides config-repo/application.yml).
+# ---------------------------------------------------------------------------------------------
+spring:
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/philips_cart?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    hikari:
+      pool-name: cart-hikari
+  kafka:
+    listener:
+      # one consumer thread per partition of order-confirmed (3 partitions)
+      concurrency: 3
+
+# OpenFeign (Spring Cloud 2021.0 property names). Keys are the @FeignClient names = Eureka service ids.
+# Short timeouts: a cart page must not hang because a dependency is slow; Resilience4j retries instead.
+feign:
+  client:
+    config:
+      product-service:
+        connect-timeout: 2000
+        read-timeout: 3000
+        logger-level: basic
+      inventory-service:
+        connect-timeout: 2000
+        read-timeout: 3000
+        logger-level: basic
+
+# Resilience4j: applied by @Retry / @CircuitBreaker on ProductServiceAdapter and InventoryServiceAdapter.
+# Aspect order (Resilience4j default): Retry( CircuitBreaker( call ) ) -> every attempt is counted by the breaker.
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 3
+        automatic-transition-from-open-to-half-open-enabled: true
+        register-health-indicator: true
+        # A 404 "product not found" or a 400 means the downstream service is HEALTHY and answered correctly.
+        # Counting those as failures would let bad client input open the breaker for everybody.
+        ignore-exceptions:
+          - com.philips.ecommerce.common.exception.ResourceNotFoundException
+          - com.philips.ecommerce.common.feign.RemoteServiceException
+    instances:
+      productService:
+        base-config: default
+      inventoryService:
+        base-config: default
+  retry:
+    configs:
+      default:
+        max-attempts: 3
+        wait-duration: 200ms
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+        # Allow-list: only infrastructure failures (timeouts, connection refused, 5xx -> translated to
+        # ServiceUnavailableException by the adapters) are retried. Business answers would be identical on retry,
+        # and an open breaker (CallNotPermittedException) must fail fast instead of being hammered.
+        retry-exceptions:
+          - com.philips.ecommerce.common.exception.ServiceUnavailableException
+        ignore-exceptions:
+          - com.philips.ecommerce.common.exception.ResourceNotFoundException
+          - com.philips.ecommerce.common.feign.RemoteServiceException
+          - io.github.resilience4j.circuitbreaker.CallNotPermittedException
+    instances:
+      productService:
+        base-config: default
+      inventoryService:
+        base-config: default
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  level:
+    com.philips.ecommerce.cart: INFO
+    # Feign logger-level BASIC is only printed when the client interfaces log at DEBUG
+    com.philips.ecommerce.cart.client: DEBUG

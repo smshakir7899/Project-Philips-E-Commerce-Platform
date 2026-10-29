@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Testcontainers starts its containers in static initializers, BEFORE Spring Boot configures logging, so
+    without this file logback's default (DEBUG for everything) dumps the whole Docker wire protocol.
+    Spring Boot's defaults are included so logging.level.* in application.yml keeps working.
+-->
+<configuration>
+    <include resource="org/springframework/boot/logging/logback/base.xml"/>
+    <logger name="org.testcontainers" level="INFO"/>
+    <logger name="tc" level="INFO"/>
+    <logger name="com.github.dockerjava" level="WARN"/>
+    <logger name="org.testcontainers.shaded" level="WARN"/>
+</configuration>

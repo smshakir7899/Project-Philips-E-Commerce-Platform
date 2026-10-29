@@ -1,0 +1,59 @@
+# ---------------------------------------------------------------------------------------------
+# product-service specific configuration (served by config-server).
+# Shared defaults (Eureka, JPA ddl-auto=validate, actuator, Jackson) come from application.yml.
+# ---------------------------------------------------------------------------------------------
+spring:
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/philips_product?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+  jpa:
+    properties:
+      hibernate:
+        # Hibernate Statistics power GET /api/products/admin/perf/stats (statement counts per benchmark run).
+        # The overhead is a handful of atomic counter increments per statement and is identical in every
+        # benchmark scenario, so it does not bias the comparison.
+        generate_statistics: ${app.product.perf.hibernate-statistics}
+  redis:
+    host: ${REDIS_HOST:localhost}
+    port: ${REDIS_PORT:6379}
+    # Short timeouts: when Redis is unhealthy the cache must fail FAST and fall back to MySQL,
+    # otherwise a cache outage turns into a latency outage.
+    timeout: 500ms
+    connect-timeout: 1s
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 6MB
+
+app:
+  product:
+    # optimized (default) | baseline  -> selects the ProductQueryService implementation (performance experiment)
+    query-mode: ${PRODUCT_QUERY_MODE:optimized}
+    cache:
+      enabled: ${PRODUCT_CACHE_ENABLED:true}
+      detail-ttl-seconds: 600
+      list-ttl-seconds: 120
+    perf:
+      hibernate-statistics: ${PRODUCT_HIBERNATE_STATS:true}
+  storage:
+    s3:
+      bucket: ${S3_BUCKET:philips-product-images}
+      region: ${AWS_REGION:eu-west-1}
+      # Empty S3_ENDPOINT = real AWS S3 (no endpoint override). Locally it points at MinIO.
+      endpoint: ${S3_ENDPOINT:http://localhost:9000}
+      # Host the browser uses for presigned URLs (signature covers the Host header). Empty = same as endpoint.
+      presign-endpoint: ${S3_PRESIGN_ENDPOINT:}
+      path-style-access: ${S3_PATH_STYLE_ACCESS:true}
+      public-base-url: ${S3_PUBLIC_BASE_URL:http://localhost:9000/philips-product-images}
+      presign-duration-minutes: 15
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+  api-docs:
+    path: /v3/api-docs
+
+logging:
+  level:
+    # generate_statistics=true makes Hibernate log a "Session Metrics" block at INFO for EVERY session.
+    # That would flood the log and distort benchmark latency, so silence it; counters are still collected.
+    org.hibernate.engine.internal.StatisticalLoggingSessionEventListener: WARN

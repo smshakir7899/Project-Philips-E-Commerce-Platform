@@ -1,0 +1,273 @@
+# ---------------------------------------------------------------------------------------------
+# api-gateway: routes, resilience, CORS and aggregated Swagger UI.
+# Merged on top of config-repo/application.yml by the gateway at startup.
+# ---------------------------------------------------------------------------------------------
+spring:
+  cloud:
+    gateway:
+      # Explicit routes only. The discovery locator (auto-route every Eureka service as /<service-id>/**) would
+      # expose internal/admin endpoints of every registered service by accident.
+      discovery:
+        locator:
+          enabled: false
+
+      httpclient:
+        # TCP connect timeout towards a downstream instance (ms). Fail fast if an instance is gone.
+        connect-timeout: 2000
+        # Max time to wait for the downstream response headers. 10s on purpose: POST /api/orders/checkout runs a
+        # synchronous saga (cart -> products -> inventory -> payment) that normally takes ~0.5s but can take 3-6s
+        # in the failure demos (payment timeout of 3s inside order-service + Feign retries).
+        response-timeout: 10s
+
+      # Applies to every route. Removes duplicate CORS headers in case a downstream service also adds them.
+      default-filters:
+        - DedupeResponseHeader=Access-Control-Allow-Origin Access-Control-Allow-Credentials, RETAIN_UNIQUE
+
+      # The gateway adds X-Forwarded-For/Proto/Host/Port. The prefix header is disabled because our public paths
+      # are identical to the services' paths; only the Swagger "/docs/<service>" routes rewrite the path, and a
+      # prefix there would make springdoc advertise a wrong server URL ("http://localhost:8080/docs/<service>").
+      x-forwarded:
+        prefix-enabled: false
+
+      # CORS for local front-end development (React/Angular/Vite dev servers). Handled ONLY at the edge;
+      # services behind the gateway do not need their own CORS configuration.
+      globalcors:
+        add-to-simple-url-handler-mapping: true
+        cors-configurations:
+          '[/**]':
+            allowed-origin-patterns: ${GATEWAY_CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:4200,http://localhost:5173}
+            allowed-methods: GET,POST,PUT,PATCH,DELETE,OPTIONS
+            allowed-headers: "*"
+            exposed-headers: X-Correlation-Id,Location,Idempotent-Replayed
+            allow-credentials: true
+            max-age: 3600
+
+      # Route filter order matters: CircuitBreaker wraps Retry, so the breaker sees ONE outcome per client
+      # request (after up to 2 retries), not every individual attempt.
+      #
+      # CircuitBreaker: only exceptions (connection refused, no instance in Eureka, timeouts) count as failures
+      # and trigger the fallback. We deliberately do NOT set "statusCodes": a 503 returned BY a service is a
+      # meaningful business answer (e.g. checkout -> PAYMENT_SERVICE_UNAVAILABLE with details.orderNumber) and must
+      # reach the client unchanged instead of being replaced by the generic fallback body.
+      #
+      # Retry: GET only (safe + idempotent). Never retry POST checkout or payments at the edge - that is the job of
+      # Idempotency-Key aware code in the services. series is emptied because its default (SERVER_ERROR = all 5xx)
+      # would also retry 500/504; we only want 502/503 (instance restarting / overloaded) plus I/O exceptions.
+      routes:
+        - id: product-service
+          uri: lb://product-service
+          predicates:
+            - Path=/api/products/**,/api/categories/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: product-service
+                fallbackUri: forward:/fallback/product-service
+            - name: Retry
+              args:
+                retries: 2
+                statuses: BAD_GATEWAY,SERVICE_UNAVAILABLE
+                series: ""
+                methods: GET
+                backoff:
+                  firstBackoff: 100ms
+                  maxBackoff: 500ms
+                  factor: 2
+                  basedOnPreviousValue: false
+
+        - id: inventory-service
+          uri: lb://inventory-service
+          predicates:
+            - Path=/api/inventory/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: inventory-service
+                fallbackUri: forward:/fallback/inventory-service
+            - name: Retry
+              args:
+                retries: 2
+                statuses: BAD_GATEWAY,SERVICE_UNAVAILABLE
+                series: ""
+                methods: GET
+                backoff:
+                  firstBackoff: 100ms
+                  maxBackoff: 500ms
+                  factor: 2
+                  basedOnPreviousValue: false
+
+        - id: cart-service
+          uri: lb://cart-service
+          predicates:
+            - Path=/api/carts/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: cart-service
+                fallbackUri: forward:/fallback/cart-service
+            - name: Retry
+              args:
+                retries: 2
+                statuses: BAD_GATEWAY,SERVICE_UNAVAILABLE
+                series: ""
+                methods: GET
+                backoff:
+                  firstBackoff: 100ms
+                  maxBackoff: 500ms
+                  factor: 2
+                  basedOnPreviousValue: false
+
+        - id: order-service
+          uri: lb://order-service
+          predicates:
+            - Path=/api/orders/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: order-service
+                fallbackUri: forward:/fallback/order-service
+            - name: Retry
+              args:
+                retries: 2
+                statuses: BAD_GATEWAY,SERVICE_UNAVAILABLE
+                series: ""
+                methods: GET
+                backoff:
+                  firstBackoff: 100ms
+                  maxBackoff: 500ms
+                  factor: 2
+                  basedOnPreviousValue: false
+
+        - id: payment-service
+          uri: lb://payment-service
+          predicates:
+            - Path=/api/payments/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: payment-service
+                fallbackUri: forward:/fallback/payment-service
+            - name: Retry
+              args:
+                retries: 2
+                statuses: BAD_GATEWAY,SERVICE_UNAVAILABLE
+                series: ""
+                methods: GET
+                backoff:
+                  firstBackoff: 100ms
+                  maxBackoff: 500ms
+                  factor: 2
+                  basedOnPreviousValue: false
+
+        - id: notification-service
+          uri: lb://notification-service
+          predicates:
+            - Path=/api/notifications/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: notification-service
+                fallbackUri: forward:/fallback/notification-service
+            - name: Retry
+              args:
+                retries: 2
+                statuses: BAD_GATEWAY,SERVICE_UNAVAILABLE
+                series: ""
+                methods: GET
+                backoff:
+                  firstBackoff: 100ms
+                  maxBackoff: 500ms
+                  factor: 2
+                  basedOnPreviousValue: false
+
+        # --- OpenAPI documents of every service, consumed by the aggregated Swagger UI below ---
+        # /docs/<service>/v3/api-docs  ->  lb://<service>/v3/api-docs
+        - id: product-service-docs
+          uri: lb://product-service
+          predicates:
+            - Path=/docs/product-service/v3/api-docs
+          filters:
+            - RewritePath=/docs/product-service/v3/api-docs, /v3/api-docs
+        - id: inventory-service-docs
+          uri: lb://inventory-service
+          predicates:
+            - Path=/docs/inventory-service/v3/api-docs
+          filters:
+            - RewritePath=/docs/inventory-service/v3/api-docs, /v3/api-docs
+        - id: cart-service-docs
+          uri: lb://cart-service
+          predicates:
+            - Path=/docs/cart-service/v3/api-docs
+          filters:
+            - RewritePath=/docs/cart-service/v3/api-docs, /v3/api-docs
+        - id: order-service-docs
+          uri: lb://order-service
+          predicates:
+            - Path=/docs/order-service/v3/api-docs
+          filters:
+            - RewritePath=/docs/order-service/v3/api-docs, /v3/api-docs
+        - id: payment-service-docs
+          uri: lb://payment-service
+          predicates:
+            - Path=/docs/payment-service/v3/api-docs
+          filters:
+            - RewritePath=/docs/payment-service/v3/api-docs, /v3/api-docs
+        - id: notification-service-docs
+          uri: lb://notification-service
+          predicates:
+            - Path=/docs/notification-service/v3/api-docs
+          filters:
+            - RewritePath=/docs/notification-service/v3/api-docs, /v3/api-docs
+
+# Resilience4j instances used by the gateway's CircuitBreaker filters (instance name = route "name" arg).
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 20
+        minimum-number-of-calls: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 3
+        automatic-transition-from-open-to-half-open-enabled: true
+        register-health-indicator: true
+  timelimiter:
+    configs:
+      default:
+        # MUST be >= httpclient.response-timeout (10s). The Resilience4j default is 1s, which would cut every
+        # checkout that takes longer than a second and return the fallback even though the order was created.
+        timeout-duration: 12s
+        cancel-running-future: true
+
+# Aggregated Swagger UI: http://localhost:8080/swagger-ui.html (dropdown top-right lists every service).
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    path: /swagger-ui.html
+    urls-primary-name: product-service
+    urls:
+      - name: product-service
+        url: /docs/product-service/v3/api-docs
+      - name: inventory-service
+        url: /docs/inventory-service/v3/api-docs
+      - name: cart-service
+        url: /docs/cart-service/v3/api-docs
+      - name: order-service
+        url: /docs/order-service/v3/api-docs
+      - name: payment-service
+        url: /docs/payment-service/v3/api-docs
+      - name: notification-service
+        url: /docs/notification-service/v3/api-docs
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,gateway,circuitbreakers,refresh
+
+logging:
+  level:
+    org.springframework.cloud.gateway: INFO
+    reactor.netty: WARN

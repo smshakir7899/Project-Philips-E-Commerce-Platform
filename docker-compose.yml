@@ -1,0 +1,466 @@
+# =============================================================================================
+# Philips e-commerce - LOCAL environment (Docker Compose v2: `docker compose`, no `version:` key,
+# which is obsolete in the Compose Specification).
+#
+#   cp .env.example .env                 # once
+#   ./mvnw -B clean package -DskipTests  # jars in <module>/target/<module>.jar
+#   scripts/start.sh                     # ordered start + health waits (or: docker compose up -d --build)
+#   scripts/stop.sh [--volumes]
+#
+# Infrastructure only (run the Spring Boot apps from the IDE / `mvn spring-boot:run`, which use the
+# localhost defaults from docs/CONTRACTS.md, e.g. KAFKA_BOOTSTRAP_SERVERS=localhost:9092):
+#   docker compose up -d mysql redis zookeeper kafka kafka-init minio minio-init kafka-ui
+#
+# CI tools (SonarQube + Jenkins, ~3 GB extra RAM):   docker compose --profile ci up -d sonarqube jenkins
+#
+# Memory budget (Docker Desktop with 8 GB): 9 JVMs x 400m + MySQL ~500m + Kafka/ZK ~1 GB +
+# Redis/MinIO/Kafka UI ~600m => ~5.7 GB. Give Docker Desktop at least 6 GB.
+#
+# Host ports follow docs/CONTRACTS.md. Containers talk to each other by SERVICE NAME on the
+# philips-net network (mysql:3306, kafka:29092, ...), never via localhost.
+# =============================================================================================
+
+name: philips-ecommerce
+
+# ---- Reusable fragments (YAML anchors; "x-" keys are ignored by Compose) ----------------------
+x-java-service: &java-service
+  restart: unless-stopped
+  mem_limit: 400m                 # heap 256m (JAVA_OPTS) + metaspace/threads/code cache headroom
+  networks: [philips-net]
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
+  # healthcheck: inherited from the image's HEALTHCHECK (curl /actuator/health, see <module>/Dockerfile)
+
+x-java-env: &java-env
+  JAVA_OPTS: "-Xms128m -Xmx256m -XX:+UseSerialGC"
+  TZ: UTC
+
+# Env shared by every config-server client (business services + gateway).
+x-client-env: &client-env
+  <<: *java-env
+  CONFIG_SERVER_URL: http://config-server:8888
+  EUREKA_URL: http://discovery-server:8761/eureka/
+
+# Env for services that own a MySQL schema.
+x-db-env: &db-env
+  MYSQL_HOST: mysql
+  MYSQL_PORT: "3306"
+  MYSQL_USER: ${MYSQL_USER:-philips}
+  MYSQL_PASSWORD: ${MYSQL_PASSWORD:-philips_pwd}
+
+x-kafka-env: &kafka-env
+  KAFKA_BOOTSTRAP_SERVERS: kafka:29092     # internal listener (localhost:9092 is for the host only)
+
+# depends_on block for a typical Kafka-using business service.
+x-kafka-service-deps: &kafka-service-deps
+  config-server:    { condition: service_healthy }
+  discovery-server: { condition: service_healthy }
+  mysql-init:       { condition: service_completed_successfully }
+  kafka-init:       { condition: service_completed_successfully }
+
+services:
+  # ============================== Infrastructure ==============================================
+  mysql:
+    image: mysql:8.0
+    container_name: philips-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_pwd}
+      MYSQL_USER: ${MYSQL_USER:-philips}          # created by the image entrypoint
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-philips_pwd}
+      TZ: UTC
+    # utf8mb4 = real UTF-8 (emoji etc.); MySQL's legacy "utf8" is 3-byte only.
+    # Authentication: we keep MySQL 8's default caching_sha2_password. The classic workaround
+    # --default-authentication-plugin=mysql_native_password (for old clients) is deprecated since
+    # 8.0.34 and removed in 8.4; Connector/J 8 supports caching_sha2 - the JDBC URL's
+    # allowPublicKeyRetrieval=true lets it fetch the server RSA key over a non-TLS connection.
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+00:00
+      - --max-connections=300          # 6 services x Hikari max 10 (+ IDE/perf tools)
+      - --innodb-buffer-pool-size=256M
+    ports: ["3306:3306"]
+    volumes:
+      - mysql-data:/var/lib/mysql
+      # Runs only on first start with an empty volume: creates the philips_* schemas.
+      # Grants are applied by the mysql-init service below on every start.
+      - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # $$ escapes $ for Compose so the variable is expanded INSIDE the container.
+      # 127.0.0.1 (TCP) instead of the socket: during first-run init MySQL listens on the socket
+      # only, so this avoids reporting healthy before the init scripts have finished.
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    mem_limit: 768m
+    networks: [philips-net]
+
+  # One-shot job: (re)creates the schemas and grants the app user on EVERY `up` (idempotent).
+  # Business services wait for it with condition: service_completed_successfully.
+  mysql-init:
+    image: mysql:8.0
+    container_name: philips-mysql-init
+    depends_on:
+      mysql: { condition: service_healthy }
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PWD: ${MYSQL_ROOT_PASSWORD:-root_pwd}
+      APP_USER: ${MYSQL_USER:-philips}
+      APP_PASSWORD: ${MYSQL_PASSWORD:-philips_pwd}
+    entrypoint: ["bash", "/init/grant-app-user.sh"]
+    volumes:
+      - ./docker/mysql/grant-app-user.sh:/init/grant-app-user.sh:ro
+    restart: "no"
+    networks: [philips-net]
+
+  redis:
+    image: redis:7-alpine
+    container_name: philips-redis
+    restart: unless-stopped
+    # Pure cache (cache-aside on product detail): bounded memory + evict least-recently-used keys
+    # of ANY key when full (allkeys-lru). No persistence needed for a cache: --save "" --appendonly no.
+    command: ["redis-server", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru",
+              "--save", "", "--appendonly", "no"]
+    ports: ["6379:6379"]
+    volumes: [redis-data:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    mem_limit: 192m
+    networks: [philips-net]
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.4
+    container_name: philips-zookeeper
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      # Four-letter-word admin commands: cp-zookeeper does not map an env var for the whitelist,
+      # so it is passed as a JVM system property. "srvr" is enabled by default and used by the healthcheck.
+      KAFKA_OPTS: "-Dzookeeper.4lw.commands.whitelist=srvr,ruok,stat"
+      KAFKA_HEAP_OPTS: "-Xms64m -Xmx256m"
+    ports: ["2181:2181"]
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-log:/var/lib/zookeeper/log
+    healthcheck:
+      test: ["CMD-SHELL", "echo srvr | nc -w 2 localhost 2181 | grep -q 'Zookeeper version'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    mem_limit: 384m
+    networks: [philips-net]
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.4
+    container_name: philips-kafka
+    restart: unless-stopped
+    depends_on:
+      zookeeper: { condition: service_healthy }
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      # Two listeners, because a client connects to the bootstrap address but then uses the
+      # ADVERTISED address returned in the metadata:
+      #   PLAINTEXT      kafka:29092     -> other containers (services, kafka-ui, kafka-init)
+      #   PLAINTEXT_HOST localhost:9092  -> apps started on the host / IDE
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      # Topics are created explicitly by kafka-init (partitions/RF chosen on purpose).
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      # Single broker => internal topics cannot have RF 3 (the default would fail).
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_MIN_INSYNC_REPLICAS: 1
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0     # faster consumer start locally
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"
+    ports: ["9092:9092"]
+    volumes: [kafka-data:/var/lib/kafka/data]
+    healthcheck:
+      # Broker answers API requests on its internal listener.
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:29092 > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 20s
+      retries: 12
+      start_period: 30s
+    mem_limit: 900m
+    networks: [philips-net]
+
+  # One-shot: creates 5 topics + 5 .DLT topics (3 partitions, RF 1), lists them, exits 0.
+  kafka-init:
+    image: confluentinc/cp-kafka:7.4.4
+    container_name: philips-kafka-init
+    depends_on:
+      kafka: { condition: service_healthy }
+    environment:
+      KAFKA_BOOTSTRAP: kafka:29092
+      TOPIC_PARTITIONS: 3
+      TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_HEAP_OPTS: "-Xmx128m"
+    volumes:
+      - ./docker/kafka/create-topics.sh:/scripts/create-topics.sh:ro
+    entrypoint: ["bash", "/scripts/create-topics.sh"]
+    restart: "no"
+    networks: [philips-net]
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:v0.7.2
+    container_name: philips-kafka-ui
+    restart: unless-stopped
+    depends_on:
+      kafka: { condition: service_healthy }
+    environment:
+      KAFKA_CLUSTERS_0_NAME: philips-local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      DYNAMIC_CONFIG_ENABLED: "false"
+      JAVA_OPTS: "-Xms64m -Xmx256m"
+    ports: ["8090:8080"]           # UI: http://localhost:8090
+    mem_limit: 384m
+    networks: [philips-net]
+
+  minio:
+    # S3-compatible object store replacing AWS S3 locally.
+    # Image choice: MinIO Inc. stopped distributing community container images in 2025 (minio/minio
+    # and minio/mc on Docker Hub / quay.io are no longer pullable). bitnamilegacy/minio is a frozen
+    # MinIO server build (RELEASE 2025-04-22) that still runs the same S3 API and web console, and
+    # it bundles the `mc` client. Any S3-compatible server works because product-service only uses
+    # the AWS SDK with an endpoint override (S3_ENDPOINT).
+    image: bitnamilegacy/minio:2025.4.22
+    container_name: philips-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_CONSOLE_PORT_NUMBER: "9001"
+    ports:
+      - "9000:9000"                # S3 API (product-service, image URLs)
+      - "9001:9001"                # web console: http://localhost:9001
+    volumes: [minio-data:/bitnami/minio/data]
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    mem_limit: 256m
+    networks: [philips-net]
+
+  # One-shot: creates the bucket + anonymous read policy (LOCAL ONLY - in AWS the bucket is private).
+  # Reuses the MinIO image because it already contains the `mc` client.
+  minio-init:
+    image: bitnamilegacy/minio:2025.4.22
+    container_name: philips-minio-init
+    depends_on:
+      minio: { condition: service_healthy }
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      S3_BUCKET: ${S3_BUCKET:-philips-product-images}
+      MC_CONFIG_DIR: /tmp/.mc       # the image runs as uid 1001 without a writable $HOME
+    volumes:
+      - ./docker/minio/create-bucket.sh:/scripts/create-bucket.sh:ro
+    entrypoint: ["sh", "/scripts/create-bucket.sh"]
+    restart: "no"
+    networks: [philips-net]
+
+  # ============================== Platform services ===========================================
+  config-server:
+    <<: *java-service
+    build: { context: ./config-server }
+    image: philips-ecommerce/config-server:${IMAGE_TAG:-local}
+    container_name: philips-config-server
+    environment:
+      <<: *java-env
+      # Native (file system) backend: the repo's config-repo/ mounted read-only. In a team you
+      # would point spring.cloud.config.server.git.uri at a Git repository instead.
+      CONFIG_REPO_LOCATION: file:/config-repo/
+    volumes:
+      - ./config-repo:/config-repo:ro
+    ports: ["8888:8888"]
+
+  discovery-server:
+    <<: *java-service
+    build: { context: ./discovery-server }
+    image: philips-ecommerce/discovery-server:${IMAGE_TAG:-local}
+    container_name: philips-discovery-server
+    # Self-contained (no config import) - it does not need config-server to start.
+    environment:
+      <<: *java-env
+      EUREKA_URL: http://discovery-server:8761/eureka/
+    ports: ["8761:8761"]           # dashboard: http://localhost:8761
+
+  # ============================== Business services ===========================================
+  product-service:
+    <<: *java-service
+    build: { context: ./product-service }
+    image: philips-ecommerce/product-service:${IMAGE_TAG:-local}
+    container_name: philips-product-service
+    depends_on:
+      config-server:    { condition: service_healthy }
+      discovery-server: { condition: service_healthy }
+      mysql-init:       { condition: service_completed_successfully }
+      redis:            { condition: service_healthy }
+      minio-init:       { condition: service_completed_successfully }
+    environment:
+      <<: [*client-env, *db-env]
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      AWS_REGION: ${AWS_REGION:-eu-west-1}
+      S3_BUCKET: ${S3_BUCKET:-philips-product-images}
+      S3_ENDPOINT: http://minio:9000          # container -> MinIO
+      S3_PATH_STYLE_ACCESS: "true"            # MinIO needs http://host/bucket/key URLs
+      # URL handed to browsers, therefore localhost (the host's view of MinIO), not minio:9000.
+      S3_PUBLIC_BASE_URL: http://localhost:9000/${S3_BUCKET:-philips-product-images}
+      S3_PRESIGN_ENDPOINT: http://localhost:9000   # presigned URLs must be signed for the host the browser calls
+      # Picked up by the AWS SDK default credentials chain. LOCAL ONLY (MinIO root user);
+      # on EC2 these are NOT set - the instance profile supplies temporary credentials.
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      PRODUCT_QUERY_MODE: ${PRODUCT_QUERY_MODE:-optimized}
+      PRODUCT_CACHE_ENABLED: ${PRODUCT_CACHE_ENABLED:-true}
+    ports: ["8081:8081"]
+
+  inventory-service:
+    <<: *java-service
+    build: { context: ./inventory-service }
+    image: philips-ecommerce/inventory-service:${IMAGE_TAG:-local}
+    container_name: philips-inventory-service
+    depends_on: *kafka-service-deps
+    environment:
+      <<: [*client-env, *db-env, *kafka-env]
+    ports: ["8082:8082"]
+
+  cart-service:
+    <<: *java-service
+    build: { context: ./cart-service }
+    image: philips-ecommerce/cart-service:${IMAGE_TAG:-local}
+    container_name: philips-cart-service
+    # Calls product-service and inventory-service via Feign at request time (resolved through
+    # Eureka) - not a startup dependency, so they are not listed here.
+    depends_on: *kafka-service-deps
+    environment:
+      <<: [*client-env, *db-env, *kafka-env]
+    ports: ["8083:8083"]
+
+  order-service:
+    <<: *java-service
+    build: { context: ./order-service }
+    image: philips-ecommerce/order-service:${IMAGE_TAG:-local}
+    container_name: philips-order-service
+    depends_on: *kafka-service-deps
+    environment:
+      <<: [*client-env, *db-env, *kafka-env]
+    ports: ["8084:8084"]
+
+  payment-service:
+    <<: *java-service
+    build: { context: ./payment-service }
+    image: philips-ecommerce/payment-service:${IMAGE_TAG:-local}
+    container_name: philips-payment-service
+    depends_on: *kafka-service-deps
+    environment:
+      <<: [*client-env, *db-env, *kafka-env]
+    ports: ["8085:8085"]
+
+  notification-service:
+    <<: *java-service
+    build: { context: ./notification-service }
+    image: philips-ecommerce/notification-service:${IMAGE_TAG:-local}
+    container_name: philips-notification-service
+    depends_on: *kafka-service-deps
+    environment:
+      <<: [*client-env, *db-env, *kafka-env]
+    ports: ["8086:8086"]
+
+  # ============================== Edge ========================================================
+  api-gateway:
+    <<: *java-service
+    build: { context: ./api-gateway }
+    image: philips-ecommerce/api-gateway:${IMAGE_TAG:-local}
+    container_name: philips-api-gateway
+    # Routes use lb://<service> (Eureka), so the gateway can start before the business services;
+    # requests to a service that is not registered yet get 503 until it appears.
+    depends_on:
+      config-server:    { condition: service_healthy }
+      discovery-server: { condition: service_healthy }
+    environment:
+      <<: *client-env
+    ports: ["8080:8080"]           # single public entry point
+
+  # ============================== CI tools (profile "ci") =====================================
+  sonarqube:
+    profiles: [ci]
+    # Community edition. Embedded H2 database = evaluation only (no upgrades, data loss risk);
+    # a real install uses PostgreSQL (SONAR_JDBC_URL/USERNAME/PASSWORD).
+    image: sonarqube:10-community
+    container_name: philips-sonarqube
+    restart: unless-stopped
+    environment:
+      # SonarQube's embedded Elasticsearch normally requires vm.max_map_count >= 262144 on the
+      # host. Disabling the bootstrap checks is acceptable for a single local instance only.
+      SONAR_ES_BOOTSTRAP_CHECKS_DISABLE: "true"
+    ports: ["9002:9000"]           # http://localhost:9002 (first login admin/admin -> forced change)
+    volumes:
+      - sonarqube-data:/opt/sonarqube/data
+      - sonarqube-extensions:/opt/sonarqube/extensions
+      - sonarqube-logs:/opt/sonarqube/logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9000/api/system/status | grep -q '\"status\":\"UP\"'"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+    mem_limit: 2g
+    networks: [philips-net]
+
+  jenkins:
+    profiles: [ci]
+    # jenkins/jenkins:lts-jdk17 + JDK 8, Maven 3.9.9, docker CLI and plugins (docker/jenkins/Dockerfile).
+    build: { context: ./docker/jenkins }
+    image: philips-ecommerce/jenkins:local
+    container_name: philips-jenkins
+    restart: unless-stopped
+    ports: ["8070:8080"]           # http://localhost:8070 (container listens on 8080)
+    environment:
+      JAVA_OPTS: "-Xmx768m -Djenkins.install.runSetupWizard=true"
+    volumes:
+      - jenkins-home:/var/jenkins_home
+      # LOCAL-ONLY SHORTCUT ("Docker outside of Docker"): lets pipeline stages run docker build /
+      # Testcontainers against the host daemon. SECURITY: access to the Docker socket is
+      # root-equivalent on the host (any job can start a privileged container mounting /).
+      # Never do this on a shared/production Jenkins - use dedicated build agents instead.
+      - /var/run/docker.sock:/var/run/docker.sock
+    # The socket is root:root 0660 on Docker Desktop -> join group 0. On Linux use the docker
+    # group id: DOCKER_GID=$(stat -c %g /var/run/docker.sock) docker compose --profile ci up -d
+    group_add: ["${DOCKER_GID:-0}"]
+    mem_limit: 1536m
+    networks: [philips-net]
+
+networks:
+  philips-net:
+    name: philips-net
+    driver: bridge
+
+volumes:
+  mysql-data:
+  redis-data:
+  zookeeper-data:
+  zookeeper-log:
+  kafka-data:
+  minio-data:
+  sonarqube-data:
+  sonarqube-extensions:
+  sonarqube-logs:
+  jenkins-home:

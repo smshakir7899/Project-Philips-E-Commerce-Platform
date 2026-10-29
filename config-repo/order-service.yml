@@ -1,0 +1,95 @@
+# ---------------------------------------------------------------------------------------------
+# order-service specific configuration (served by config-server; overrides config-repo/application.yml)
+# ---------------------------------------------------------------------------------------------
+spring:
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/philips_order?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+
+# OpenFeign (Spring Cloud 2021.0 property names). Remote calls must fail fast: the checkout request thread waits
+# for them. The payment read timeout (3 s) is intentionally SHORTER than the simulated slow gateway
+# (tok_timeout = 6 s) to demonstrate the "outcome unknown" branch of the saga.
+feign:
+  client:
+    config:
+      default:
+        connect-timeout: 2000
+        read-timeout: 3000
+        logger-level: basic
+      cart-service:
+        connect-timeout: 2000
+        read-timeout: 3000
+      product-service:
+        connect-timeout: 2000
+        read-timeout: 3000
+      inventory-service:
+        connect-timeout: 2000
+        read-timeout: 3000
+      payment-service:
+        connect-timeout: 2000
+        read-timeout: 3000
+
+# Resilience4j: one circuit breaker + one retry instance per downstream service (names = Feign client names).
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 20
+        minimum-number-of-calls: 10
+        failure-rate-threshold: 50
+        slow-call-duration-threshold: 2500ms
+        slow-call-rate-threshold: 80
+        wait-duration-in-open-state: 15s
+        permitted-number-of-calls-in-half-open-state: 3
+        automatic-transition-from-open-to-half-open-enabled: true
+        register-health-indicator: true
+        # Business 4xx answers (e.g. 409 INSUFFICIENT_STOCK) are NOT failures of the remote service.
+        record-failure-predicate: com.philips.ecommerce.order.client.RemoteCallFailurePredicate
+    instances:
+      cart-service:
+        base-config: default
+      product-service:
+        base-config: default
+      inventory-service:
+        base-config: default
+      payment-service:
+        base-config: default
+  retry:
+    configs:
+      default:
+        max-attempts: 3
+        wait-duration: 200ms
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+        # Only transport failures (timeouts, connection refused) are retried. Business errors
+        # (RemoteServiceException 4xx) and an open circuit (CallNotPermittedException) are not.
+        retry-exceptions:
+          - feign.RetryableException
+        ignore-exceptions:
+          - com.philips.ecommerce.common.feign.RemoteServiceException
+          - io.github.resilience4j.circuitbreaker.CallNotPermittedException
+    instances:
+      cart-service:
+        base-config: default
+      product-service:
+        base-config: default
+      inventory-service:
+        base-config: default
+      payment-service:
+        base-config: default
+        # One retry is enough: after a read timeout the retry (same idempotency key) returns the stored payment.
+        max-attempts: 2
+        wait-duration: 500ms
+
+app:
+  outbox:
+    enabled: true
+    poll-interval-ms: 1000
+    batch-size: 50
+    max-attempts: 10
+    send-timeout-ms: 10000
+    fetch-mode: SKIP_LOCKED
+
+logging:
+  level:
+    com.philips.ecommerce.order.client: INFO

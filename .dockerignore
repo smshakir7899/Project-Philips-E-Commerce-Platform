@@ -1,0 +1,22 @@
+# Used when the build context is the REPO ROOT (docker/Dockerfile.multistage).
+# The per-module Dockerfiles use ./<module> as context and copy only target/<module>.jar, so the
+# context is small anyway. Keep the context small: everything sent here is uploaded to the daemon.
+.git
+.gitignore
+.idea
+.vscode
+*.iml
+.DS_Store
+**/target
+.mvn/wrapper/*.jar
+.env
+.env.*
+*.pem
+*.key
+perf/results
+verify-report-*.txt
+postman
+deploy
+docs
+**/node_modules
+.scannerwork

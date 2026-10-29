@@ -1,0 +1,69 @@
+# Self-contained test configuration: shadows src/main/resources/application.yml on the test classpath,
+# so no config-server, no Eureka, no MySQL and no Redis are needed for unit/slice tests.
+server:
+  port: 0
+
+spring:
+  application:
+    name: product-service
+  cloud:
+    config:
+      enabled: false
+    discovery:
+      enabled: false
+  datasource:
+    url: jdbc:h2:mem:philips_product;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: create-drop
+    properties:
+      hibernate:
+        generate_statistics: true
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: false
+  redis:
+    host: localhost
+    port: 6379
+    timeout: 200ms
+    connect-timeout: 200ms
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 6MB
+
+eureka:
+  client:
+    enabled: false
+
+management:
+  health:
+    redis:
+      enabled: false
+
+app:
+  product:
+    query-mode: optimized
+    cache:
+      # Redis is not available in unit tests; ProductCacheService then passes straight through to MySQL.
+      enabled: false
+      detail-ttl-seconds: 600
+      list-ttl-seconds: 120
+    perf:
+      hibernate-statistics: true
+  storage:
+    s3:
+      bucket: philips-product-images
+      region: eu-west-1
+      endpoint: http://localhost:9000
+      path-style-access: true
+      public-base-url: http://localhost:9000/philips-product-images
+      presign-duration-minutes: 15
+
+logging:
+  level:
+    org.hibernate.engine.internal.StatisticalLoggingSessionEventListener: WARN

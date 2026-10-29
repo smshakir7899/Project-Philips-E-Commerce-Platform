@@ -1,0 +1,18 @@
+# Bootstrap-only settings. Everything else comes from config-server
+# (config-repo/application.yml + config-repo/notification-service.yml).
+server:
+  port: 8086
+
+spring:
+  application:
+    name: notification-service
+  config:
+    import: "configserver:${CONFIG_SERVER_URL:http://localhost:8888}"
+  cloud:
+    config:
+      fail-fast: true
+      retry:
+        initial-interval: 1000
+        multiplier: 1.5
+        max-interval: 10000
+        max-attempts: 20

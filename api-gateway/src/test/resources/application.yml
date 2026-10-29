@@ -1,0 +1,32 @@
+# Self-contained test configuration: no config-server, no Eureka, static routes only.
+spring:
+  application:
+    name: api-gateway
+  cloud:
+    config:
+      enabled: false
+    discovery:
+      enabled: false
+    gateway:
+      httpclient:
+        connect-timeout: 500
+        response-timeout: 2s
+      routes:
+        # Points at a port where nothing listens -> connection refused -> CircuitBreaker fallback.
+        - id: product-service
+          uri: http://localhost:${test.unreachable-port:1}
+          predicates:
+            - Path=/api/products/**,/api/categories/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: product-service
+                fallbackUri: forward:/fallback/product-service
+
+eureka:
+  client:
+    enabled: false
+
+logging:
+  level:
+    com.philips.ecommerce: DEBUG

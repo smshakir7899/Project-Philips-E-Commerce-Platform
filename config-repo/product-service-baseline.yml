@@ -1,0 +1,10 @@
+# ---------------------------------------------------------------------------------------------
+# Profile 'baseline' (SPRING_PROFILES_ACTIVE=baseline): the "before" side of the performance experiment.
+# Naive JPA data access (entities + lazy N+1, LIKE '%q%' search) and NO Redis cache.
+# Equivalent to PRODUCT_QUERY_MODE=baseline PRODUCT_CACHE_ENABLED=false (perf/run-benchmark.sh uses the env vars).
+# ---------------------------------------------------------------------------------------------
+app:
+  product:
+    query-mode: baseline
+    cache:
+      enabled: false

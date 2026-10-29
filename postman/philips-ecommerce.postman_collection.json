@@ -1,0 +1,3227 @@
+{
+  "info": {
+    "_postman_id": "48412723-0316-57a9-a2fd-f349cfe13833",
+    "name": "philips-ecommerce",
+    "description": "Philips e-commerce microservices (learning project). All requests go through the API gateway ({{gatewayUrl}}, default http://localhost:8080) except the Eureka request.\n\nUsage:\n1. Import this collection AND postman/local.postman_environment.json.\n2. Select the \"philips-ecommerce local\" environment.\n3. Run the \"Checkout journey\" folder with the Collection Runner (in order).\n\ncustomerId is generated once (CUST-PM-<epoch ms>) if empty - clear it to start a fresh customer. Every checkout request generates a new Idempotency-Key except the explicit replay step. Payment is SIMULATED via cardToken: tok_visa (success), tok_declined (402), tok_timeout (503 after the 3s read timeout, later refunded), tok_error (503). Seed data: products 1 and 2 have plenty of stock, product 5 has 2 units, product 19 costs > 5000 EUR, product 20 is inactive.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Collection-level: unique customer per environment and a correlation id per request.",
+          "if (!pm.environment.get('customerId') && !pm.collectionVariables.get('customerId')) {",
+          "  pm.environment.set('customerId', 'CUST-PM-' + Date.now());",
+          "}",
+          "pm.request.headers.upsert({ key: 'X-Correlation-Id', value: pm.variables.replaceIn('{{$guid}}') });"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.test('response time < 10s', function () { pm.expect(pm.response.responseTime).to.be.below(10000); });"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "gatewayUrl",
+      "value": "http://localhost:8080"
+    }
+  ],
+  "item": [
+    {
+      "name": "Checkout journey",
+      "item": [
+        {
+          "name": "01 List products",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/products?page=0&size=5"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"has products\", function () { pm.expect(pm.response.json().totalElements).to.be.above(0); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "02 Product detail (1)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/products/1"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"active\", function () { pm.expect(pm.response.json().active).to.eql(true); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "03 Availability product 1 qty 2",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/inventory/1/availability?quantity=2"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"available\", function () { pm.expect(pm.response.json().available).to.eql(true); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "04 Clear cart",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/carts/{{customerId}}"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 204\", function () { pm.response.to.have.status(204); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "05 Add product 1 qty 2",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/carts/{{customerId}}/items",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"productId\": 1,\n  \"quantity\": 2\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "06 Add product 2 qty 1",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/carts/{{customerId}}/items",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"productId\": 2,\n  \"quantity\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"2 lines\", function () { pm.expect(pm.response.json().items.length).to.eql(2); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "07 Update product 1 qty 1",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/carts/{{customerId}}/items/1",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantity\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "08 Get cart",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/carts/{{customerId}}"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"totalQuantity 2\", function () { pm.expect(pm.response.json().totalQuantity).to.eql(2); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "09 Checkout (tok_visa) -> 201 CONFIRMED",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/orders/checkout",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"cardToken\": \"tok_visa\",\n  \"shippingAddress\": {\n    \"fullName\": \"Jane Doe\",\n    \"line1\": \"High Tech Campus 52\",\n    \"city\": \"Eindhoven\",\n    \"postalCode\": \"5656 AG\",\n    \"country\": \"NL\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A NEW Idempotency-Key for every checkout attempt (the replay request re-uses it on purpose).",
+                  "pm.environment.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", function () { pm.response.to.have.status(201); });",
+                  "const o = pm.response.json();",
+                  "pm.test(\"CONFIRMED\", function () { pm.expect(o.status).to.eql(\"CONFIRMED\"); });",
+                  "pm.test(\"paymentReference set\", function () { pm.expect(o.paymentReference).to.be.a(\"string\"); });",
+                  "pm.environment.set(\"orderNumber\", o.orderNumber);",
+                  "pm.environment.set(\"paymentReference\", o.paymentReference);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "10 Replay same Idempotency-Key -> 200 Idempotent-Replayed",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/orders/checkout",
+            "description": "Deliberately has NO pre-request script: re-uses the key generated by step 09.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"cardToken\": \"tok_visa\",\n  \"shippingAddress\": {\n    \"fullName\": \"Jane Doe\",\n    \"line1\": \"High Tech Campus 52\",\n    \"city\": \"Eindhoven\",\n    \"postalCode\": \"5656 AG\",\n    \"country\": \"NL\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"Idempotent-Replayed: true\", function () { pm.expect(pm.response.headers.get(\"Idempotent-Replayed\")).to.eql(\"true\"); });",
+                  "pm.test(\"same order\", function () { pm.expect(pm.response.json().orderNumber).to.eql(pm.environment.get(\"orderNumber\")); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "11 Get order",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/orders/{{orderNumber}}"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"CONFIRMED\", function () { pm.expect(pm.response.json().status).to.eql(\"CONFIRMED\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "12 Order tracking",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/orders/{{orderNumber}}/tracking"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"currentStatus CONFIRMED\", function () { pm.expect(pm.response.json().currentStatus).to.eql(\"CONFIRMED\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "13 Inventory reservation (COMMITTED once Kafka event consumed)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/inventory/reservations/{{orderNumber}}",
+            "description": "Committed asynchronously by the order-confirmed consumer - may still be RESERVED for a moment."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"RESERVED or COMMITTED\", function () { pm.expect(pm.response.json().status).to.be.oneOf([\"RESERVED\",\"COMMITTED\"]); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "14 Payment of order",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/payments/order/{{orderNumber}}"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"SUCCEEDED\", function () { pm.expect(pm.response.json().status).to.eql(\"SUCCEEDED\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "15 Notifications of order",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/notifications/order/{{orderNumber}}",
+            "description": "Asynchronous (Kafka) - re-send after a few seconds if the list is still incomplete."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"is a list\", function () { pm.expect(pm.response.json()).to.be.an(\"array\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "16 Order history",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/orders?customerId={{customerId}}&page=0&size=10"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"contains order\", function () { pm.expect(pm.response.json().content.map(o => o.orderNumber)).to.include(pm.environment.get(\"orderNumber\")); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "17 Add product 1 qty 1 (for declined checkout)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/carts/{{customerId}}/items",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"productId\": 1,\n  \"quantity\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "18 Checkout (tok_declined) -> 402 PAYMENT_DECLINED",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/orders/checkout",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"cardToken\": \"tok_declined\",\n  \"shippingAddress\": {\n    \"fullName\": \"Jane Doe\",\n    \"line1\": \"High Tech Campus 52\",\n    \"city\": \"Eindhoven\",\n    \"postalCode\": \"5656 AG\",\n    \"country\": \"NL\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A NEW Idempotency-Key for every checkout attempt (the replay request re-uses it on purpose).",
+                  "pm.environment.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 402\", function () { pm.response.to.have.status(402); });",
+                  "pm.test(\"error code PAYMENT_DECLINED\", function () { pm.expect(pm.response.json().code).to.eql(\"PAYMENT_DECLINED\"); });",
+                  "pm.environment.set(\"declinedOrderNumber\", (pm.response.json().details || {}).orderNumber);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "19 Get declined order -> PAYMENT_FAILED",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/orders/{{declinedOrderNumber}}"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"PAYMENT_FAILED\", function () { pm.expect(pm.response.json().status).to.eql(\"PAYMENT_FAILED\"); });"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "description": "Run in order with the Collection Runner. Happy path, idempotent replay, then a declined payment."
+    },
+    {
+      "name": "product-service",
+      "item": [
+        {
+          "name": "List products (paged)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/products?page=0&size=20&sort=name,asc"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                  "const b = pm.response.json();",
+                  "pm.test(\"page shape\", function () { pm.expect(b).to.have.keys(\"content\",\"page\",\"size\",\"totalElements\",\"totalPages\",\"last\"); });",
+                  "pm.test(\"only active products\", function () { b.content.forEach(p => pm.expect(p.active).to.eql(true)); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search products (q, price range)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/products?q=philips&minPrice=10&maxPrice=1000&page=0&size=10&sort=price,desc"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Products by category",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/products?categoryId=1&page=0&size=20"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get product by id",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/products/{{productId}}"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"detail fields\", function () { const p = pm.response.json(); pm.expect(p).to.include.keys(\"id\",\"sku\",\"name\",\"price\",\"currency\",\"category\",\"images\",\"attributes\"); });",
+                  "pm.environment.set(\"productSku\", pm.response.json().sku);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get product - not found (404)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/products/999999"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 404\", function () { pm.response.to.have.status(404); });",
+                  "pm.test(\"error code PRODUCT_NOT_FOUND\", function () { pm.expect(pm.response.json().code).to.eql(\"PRODUCT_NOT_FOUND\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get product by SKU",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/products/sku/{{productSku}}"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.environment.get('productSku')) { console.warn('productSku not set - run \"Get product by id\" first'); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP one of [200, 404]\", function () { pm.expect(pm.response.code).to.be.oneOf([200, 404]); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Batch products (includes inactive)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/products/batch?ids=1,2,5,19,20"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"is a list\", function () { pm.expect(pm.response.json()).to.be.an(\"array\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create product",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/products",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sku\": \"PH-DEMO-{{$timestamp}}\",\n  \"name\": \"Philips Sonicare DiamondClean 9000 (demo)\",\n  \"description\": \"Electric toothbrush created from Postman.\",\n  \"brand\": \"Philips\",\n  \"price\": 199.99,\n  \"currency\": \"EUR\",\n  \"categoryId\": 1,\n  \"attributes\": [\n    {\n      \"name\": \"color\",\n      \"value\": \"white\"\n    },\n    {\n      \"name\": \"warranty\",\n      \"value\": \"2 years\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", function () { pm.response.to.have.status(201); });",
+                  "pm.test(\"Location header\", function () { pm.response.to.have.header(\"Location\"); });",
+                  "pm.environment.set(\"createdProductId\", pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update product (evicts cache)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/products/{{createdProductId}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sku\": \"PH-DEMO-{{$timestamp}}\",\n  \"name\": \"Philips Sonicare DiamondClean 9000 (demo, updated)\",\n  \"description\": \"Electric toothbrush created from Postman.\",\n  \"brand\": \"Philips\",\n  \"price\": 179.99,\n  \"currency\": \"EUR\",\n  \"categoryId\": 1,\n  \"attributes\": [\n    {\n      \"name\": \"color\",\n      \"value\": \"white\"\n    },\n    {\n      \"name\": \"warranty\",\n      \"value\": \"2 years\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Soft-delete product (evicts cache)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/products/{{createdProductId}}"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 204\", function () { pm.response.to.have.status(204); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload product image (multipart)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/products/{{productId}}/images",
+            "description": "Stored in MinIO locally (bucket philips-product-images), S3 on AWS.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "sample-product-image.png",
+                  "description": "Sample image shipped in postman/ (newman: run with --working-dir postman). In the Postman app, re-select the file if it is not found."
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", function () { pm.response.to.have.status(201); });",
+                  "pm.environment.set(\"imageId\", pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Presigned URL for image",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/products/{{productId}}/images/{{imageId}}/presigned-url"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"url + expiresAt\", function () { pm.expect(pm.response.json()).to.include.keys(\"url\",\"expiresAt\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete product image",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/products/{{productId}}/images/{{imageId}}"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 204\", function () { pm.response.to.have.status(204); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List categories",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/categories"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get category",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/categories/1"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create category",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/categories",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Demo category {{$timestamp}}\",\n  \"slug\": \"demo-{{$timestamp}}\",\n  \"description\": \"Created from Postman\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "admin",
+          "item": [
+            {
+              "name": "Cache stats",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{gatewayUrl}}/api/products/admin/cache/stats"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                      "pm.test(\"stats fields\", function () { pm.expect(pm.response.json()).to.include.keys(\"enabled\",\"hits\",\"misses\",\"errors\",\"hitRatio\",\"ttlSeconds\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Flush product cache",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{gatewayUrl}}/api/products/admin/cache"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 204\", function () { pm.response.to.have.status(204); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Perf stats",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{gatewayUrl}}/api/products/admin/perf/stats"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                      "pm.test(\"perf fields\", function () { pm.expect(pm.response.json()).to.include.keys(\"queryMode\",\"cacheEnabled\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Reset perf stats",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{gatewayUrl}}/api/products/admin/perf/reset"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 204\", function () { pm.response.to.have.status(204); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "inventory-service",
+      "item": [
+        {
+          "name": "Get inventory",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/inventory/{{productId}}"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"inventory fields\", function () { pm.expect(pm.response.json()).to.include.keys(\"productId\",\"sku\",\"availableQuantity\",\"reservedQuantity\",\"inStock\"); });",
+                  "if (pm.response.code === 200 && pm.response.json().productId === 5) { pm.environment.set(\"product5Sku\", pm.response.json().sku); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get inventory for several products",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/inventory?productIds=1,2,5"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Check availability",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/inventory/{{productId}}/availability?quantity=2"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"available flag\", function () { pm.expect(pm.response.json()).to.have.property(\"available\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Availability - product 5 (only 2 units), qty 3",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/inventory/5/availability?quantity=3"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"not available\", function () { pm.expect(pm.response.json().available).to.eql(false); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upsert stock (product 5)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/inventory/5",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sku\": \"{{product5Sku}}\",\n  \"availableQuantity\": 2,\n  \"lowStockThreshold\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Look up the real SKU of product 5 (seed value PH-HUE-PLAYBAR2 is the environment default).",
+                  "pm.sendRequest(pm.variables.replaceIn('{{gatewayUrl}}/api/inventory/5'), function (err, res) {",
+                  "  if (!err && res.code === 200) { pm.environment.set('product5Sku', res.json().sku); }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create reservation (manual)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/inventory/reservations",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderNumber\": \"ORD-MANUAL-{{$timestamp}}\",\n  \"items\": [\n    {\n      \"productId\": 1,\n      \"quantity\": 1\n    },\n    {\n      \"productId\": 2,\n      \"quantity\": 1\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP one of [201, 200]\", function () { pm.expect(pm.response.code).to.be.oneOf([201, 200]); });",
+                  "pm.environment.set(\"manualReservation\", pm.response.json().orderNumber);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reservation - insufficient stock (409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/inventory/reservations",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderNumber\": \"ORD-MANUAL-{{$timestamp}}-X\",\n  \"items\": [\n    {\n      \"productId\": 5,\n      \"quantity\": 99\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 409\", function () { pm.response.to.have.status(409); });",
+                  "pm.test(\"error code INSUFFICIENT_STOCK\", function () { pm.expect(pm.response.json().code).to.eql(\"INSUFFICIENT_STOCK\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get reservation",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/inventory/reservations/{{manualReservation}}"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Commit reservation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/inventory/reservations/{{manualReservation}}/commit"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"COMMITTED\", function () { pm.expect(pm.response.json().status).to.eql(\"COMMITTED\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Release reservation (COMMITTED -> RETURNED)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/inventory/reservations/{{manualReservation}}/release"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"RELEASED or RETURNED\", function () { pm.expect(pm.response.json().status).to.be.oneOf([\"RELEASED\",\"RETURNED\"]); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "cart-service",
+      "item": [
+        {
+          "name": "Get cart",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/carts/{{customerId}}"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"cart fields\", function () { pm.expect(pm.response.json()).to.include.keys(\"customerId\",\"items\",\"totalQuantity\",\"subtotal\",\"currency\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Add item",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/carts/{{customerId}}/items",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"productId\": 1,\n  \"quantity\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Add item - inactive product 20 (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/carts/{{customerId}}/items",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"productId\": 20,\n  \"quantity\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 400\", function () { pm.response.to.have.status(400); });",
+                  "pm.test(\"error code PRODUCT_INACTIVE\", function () { pm.expect(pm.response.json().code).to.eql(\"PRODUCT_INACTIVE\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Add item - unknown product (404)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/carts/{{customerId}}/items",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"productId\": 999999,\n  \"quantity\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 404\", function () { pm.response.to.have.status(404); });",
+                  "pm.test(\"error code PRODUCT_NOT_FOUND\", function () { pm.expect(pm.response.json().code).to.eql(\"PRODUCT_NOT_FOUND\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Add item - quantity > 10 (400 validation)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/carts/{{customerId}}/items",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"productId\": 1,\n  \"quantity\": 11\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 400\", function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Add item - product 5 qty 3, only 2 in stock (409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/carts/{{customerId}}/items",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"productId\": 5,\n  \"quantity\": 3\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 409\", function () { pm.response.to.have.status(409); });",
+                  "pm.test(\"error code INSUFFICIENT_STOCK\", function () { pm.expect(pm.response.json().code).to.eql(\"INSUFFICIENT_STOCK\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update item quantity",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/carts/{{customerId}}/items/1",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantity\": 3\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Remove item",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/carts/{{customerId}}/items/1"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Remove item - not in cart (404)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/carts/{{customerId}}/items/424242"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 404\", function () { pm.response.to.have.status(404); });",
+                  "pm.test(\"error code CART_ITEM_NOT_FOUND\", function () { pm.expect(pm.response.json().code).to.eql(\"CART_ITEM_NOT_FOUND\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Clear cart",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/carts/{{customerId}}"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 204\", function () { pm.response.to.have.status(204); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "order-service",
+      "item": [
+        {
+          "name": "Checkout (tok_visa)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/orders/checkout",
+            "description": "Requires items in the cart of {{customerId}} (see cart-service folder).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"cardToken\": \"tok_visa\",\n  \"shippingAddress\": {\n    \"fullName\": \"Jane Doe\",\n    \"line1\": \"High Tech Campus 52\",\n    \"city\": \"Eindhoven\",\n    \"postalCode\": \"5656 AG\",\n    \"country\": \"NL\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", function () { pm.response.to.have.status(201); });",
+                  "const o = pm.response.json();",
+                  "pm.test(\"CONFIRMED\", function () { pm.expect(o.status).to.eql(\"CONFIRMED\"); });",
+                  "pm.environment.set(\"orderNumber\", o.orderNumber);",
+                  "pm.environment.set(\"paymentReference\", o.paymentReference);"
+                ]
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A NEW Idempotency-Key for every checkout attempt (the replay request re-uses it on purpose).",
+                  "pm.environment.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));",
+                  "// Make this request independent of folder order: put one item (product 2) in the cart first.",
+                  "pm.sendRequest({",
+                  "  url: pm.variables.replaceIn('{{gatewayUrl}}/api/carts/' + pm.environment.get('customerId') + '/items'),",
+                  "  method: 'POST',",
+                  "  header: { 'Content-Type': 'application/json' },",
+                  "  body: { mode: 'raw', raw: JSON.stringify({ productId: 2, quantity: 1 }) }",
+                  "}, function (err, res) { if (err || res.code !== 200) { console.warn('add-to-cart failed', err || res.code); } });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Checkout - empty cart (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/orders/checkout",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"CUST-EMPTY-{{$timestamp}}\",\n  \"cardToken\": \"tok_visa\",\n  \"shippingAddress\": {\n    \"fullName\": \"Jane Doe\",\n    \"line1\": \"High Tech Campus 52\",\n    \"city\": \"Eindhoven\",\n    \"postalCode\": \"5656 AG\",\n    \"country\": \"NL\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A NEW Idempotency-Key for every checkout attempt (the replay request re-uses it on purpose).",
+                  "pm.environment.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 400\", function () { pm.response.to.have.status(400); });",
+                  "pm.test(\"error code EMPTY_CART\", function () { pm.expect(pm.response.json().code).to.eql(\"EMPTY_CART\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Checkout - missing Idempotency-Key (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/orders/checkout",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"cardToken\": \"tok_visa\",\n  \"shippingAddress\": {\n    \"fullName\": \"Jane Doe\",\n    \"line1\": \"High Tech Campus 52\",\n    \"city\": \"Eindhoven\",\n    \"postalCode\": \"5656 AG\",\n    \"country\": \"NL\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 400\", function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Checkout (tok_timeout) - payment slower than 3s read timeout",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/orders/checkout",
+            "description": "Add an item to the cart first. order-service gives up after 3s -> 503, order PAYMENT_FAILED; the late payment success is refunded by payment-service (poll payment by order -> REFUNDED).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"cardToken\": \"tok_timeout\",\n  \"shippingAddress\": {\n    \"fullName\": \"Jane Doe\",\n    \"line1\": \"High Tech Campus 52\",\n    \"city\": \"Eindhoven\",\n    \"postalCode\": \"5656 AG\",\n    \"country\": \"NL\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 503\", function () { pm.response.to.have.status(503); });",
+                  "pm.test(\"error code PAYMENT_SERVICE_UNAVAILABLE\", function () { pm.expect(pm.response.json().code).to.eql(\"PAYMENT_SERVICE_UNAVAILABLE\"); });",
+                  "const d = pm.response.json().details || {};",
+                  "if (d.orderNumber) { pm.environment.set(\"timeoutOrderNumber\", d.orderNumber); }"
+                ]
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A NEW Idempotency-Key for every checkout attempt (the replay request re-uses it on purpose).",
+                  "pm.environment.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));",
+                  "// Make this request independent of folder order: put one item (product 2) in the cart first.",
+                  "pm.sendRequest({",
+                  "  url: pm.variables.replaceIn('{{gatewayUrl}}/api/carts/' + pm.environment.get('customerId') + '/items'),",
+                  "  method: 'POST',",
+                  "  header: { 'Content-Type': 'application/json' },",
+                  "  body: { mode: 'raw', raw: JSON.stringify({ productId: 2, quantity: 1 }) }",
+                  "}, function (err, res) { if (err || res.code !== 200) { console.warn('add-to-cart failed', err || res.code); } });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Checkout (tok_error) - payment gateway error",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/orders/checkout",
+            "description": "Add an item to the cart first. payment-service answers 503 PAYMENT_GATEWAY_ERROR -> order PAYMENT_FAILED.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"cardToken\": \"tok_error\",\n  \"shippingAddress\": {\n    \"fullName\": \"Jane Doe\",\n    \"line1\": \"High Tech Campus 52\",\n    \"city\": \"Eindhoven\",\n    \"postalCode\": \"5656 AG\",\n    \"country\": \"NL\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 503\", function () { pm.response.to.have.status(503); });",
+                  "pm.test(\"error code PAYMENT_SERVICE_UNAVAILABLE\", function () { pm.expect(pm.response.json().code).to.eql(\"PAYMENT_SERVICE_UNAVAILABLE\"); });"
+                ]
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A NEW Idempotency-Key for every checkout attempt (the replay request re-uses it on purpose).",
+                  "pm.environment.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));",
+                  "// Make this request independent of folder order: put one item (product 2) in the cart first.",
+                  "pm.sendRequest({",
+                  "  url: pm.variables.replaceIn('{{gatewayUrl}}/api/carts/' + pm.environment.get('customerId') + '/items'),",
+                  "  method: 'POST',",
+                  "  header: { 'Content-Type': 'application/json' },",
+                  "  body: { mode: 'raw', raw: JSON.stringify({ productId: 2, quantity: 1 }) }",
+                  "}, function (err, res) { if (err || res.code !== 200) { console.warn('add-to-cart failed', err || res.code); } });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get order",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/orders/{{orderNumber}}"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"orderNumber format\", function () { pm.expect(pm.response.json().orderNumber).to.match(/^ORD-\\d{8}-[0-9A-F]{8}$/); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get order - not found (404)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/orders/ORD-19700101-00000000"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 404\", function () { pm.response.to.have.status(404); });",
+                  "pm.test(\"error code ORDER_NOT_FOUND\", function () { pm.expect(pm.response.json().code).to.eql(\"ORDER_NOT_FOUND\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Order history of customer",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/orders?customerId={{customerId}}&page=0&size=10"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Order tracking",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/orders/{{orderNumber}}/tracking"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"history present\", function () { pm.expect(pm.response.json().history).to.be.an(\"array\").that.is.not.empty; });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update status -> SHIPPED",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/orders/{{orderNumber}}/status",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"SHIPPED\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP one of [200, 409]\", function () { pm.expect(pm.response.code).to.be.oneOf([200, 409]); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update status -> DELIVERED",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/orders/{{orderNumber}}/status",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"DELIVERED\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP one of [200, 409]\", function () { pm.expect(pm.response.code).to.be.oneOf([200, 409]); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel order (CONFIRMED -> CANCELLED)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/orders/{{orderNumber}}/cancel",
+            "description": "Only CONFIRMED orders can be cancelled; otherwise 409 INVALID_STATUS_TRANSITION."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP one of [200, 409]\", function () { pm.expect(pm.response.code).to.be.oneOf([200, 409]); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "admin",
+          "item": [
+            {
+              "name": "Outbox events (FAILED)",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{gatewayUrl}}/api/orders/admin/outbox?status=FAILED"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                      "const l = pm.response.json();",
+                      "// Only a FAILED event can be retried; with none, the next request is skipped.",
+                      "if (l.length) { pm.environment.set(\"outboxId\", l[0].id); } else { pm.environment.unset(\"outboxId\"); }"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Retry outbox event",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{gatewayUrl}}/api/orders/admin/outbox/{{outboxId}}/retry"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });"
+                    ]
+                  }
+                },
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (!pm.environment.get('outboxId')) {",
+                      "  console.log('No FAILED outbox event (the normal case) - skipping retry request');",
+                      "  pm.execution.skipRequest();",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "payment-service",
+      "item": [
+        {
+          "name": "Create payment (tok_visa) -> SUCCEEDED",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/payments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderNumber\": \"ORD-PM-{{$timestamp}}\",\n  \"customerId\": \"{{customerId}}\",\n  \"amount\": 49.99,\n  \"currency\": \"EUR\",\n  \"cardToken\": \"tok_visa\",\n  \"idempotencyKey\": \"PM-{{$guid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", function () { pm.response.to.have.status(201); });",
+                  "const p = pm.response.json();",
+                  "pm.test(\"SUCCEEDED\", function () { pm.expect(p.status).to.eql(\"SUCCEEDED\"); });",
+                  "pm.test(\"reference format\", function () { pm.expect(p.paymentReference).to.match(/^PAY-[A-Z0-9]{12}$/); });",
+                  "pm.environment.set(\"directPaymentReference\", p.paymentReference);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create payment (tok_declined) -> FAILED CARD_DECLINED",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/payments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderNumber\": \"ORD-PM-{{$timestamp}}\",\n  \"customerId\": \"{{customerId}}\",\n  \"amount\": 49.99,\n  \"currency\": \"EUR\",\n  \"cardToken\": \"tok_declined\",\n  \"idempotencyKey\": \"PM-{{$guid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", function () { pm.response.to.have.status(201); });",
+                  "pm.test(\"FAILED / CARD_DECLINED\", function () { const p = pm.response.json(); pm.expect(p.status).to.eql(\"FAILED\"); pm.expect(p.failureReason).to.eql(\"CARD_DECLINED\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create payment (amount > 5000) -> FAILED AMOUNT_LIMIT_EXCEEDED",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/payments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderNumber\": \"ORD-PM-{{$timestamp}}\",\n  \"customerId\": \"{{customerId}}\",\n  \"amount\": 5000.01,\n  \"currency\": \"EUR\",\n  \"cardToken\": \"tok_visa\",\n  \"idempotencyKey\": \"PM-{{$guid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", function () { pm.response.to.have.status(201); });",
+                  "pm.test(\"AMOUNT_LIMIT_EXCEEDED\", function () { pm.expect(pm.response.json().failureReason).to.eql(\"AMOUNT_LIMIT_EXCEEDED\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create payment (tok_timeout) -> sleeps 6s then SUCCEEDED",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/payments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderNumber\": \"ORD-PM-{{$timestamp}}\",\n  \"customerId\": \"{{customerId}}\",\n  \"amount\": 49.99,\n  \"currency\": \"EUR\",\n  \"cardToken\": \"tok_timeout\",\n  \"idempotencyKey\": \"PM-{{$guid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create payment (tok_error) -> 503 PAYMENT_GATEWAY_ERROR",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/payments",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderNumber\": \"ORD-PM-{{$timestamp}}\",\n  \"customerId\": \"{{customerId}}\",\n  \"amount\": 49.99,\n  \"currency\": \"EUR\",\n  \"cardToken\": \"tok_error\",\n  \"idempotencyKey\": \"PM-{{$guid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 503\", function () { pm.response.to.have.status(503); });",
+                  "pm.test(\"error code PAYMENT_GATEWAY_ERROR\", function () { pm.expect(pm.response.json().code).to.eql(\"PAYMENT_GATEWAY_ERROR\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get payment by reference",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/payments/{{paymentReference}}"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get latest payment of order",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/payments/order/{{orderNumber}}"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refund payment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/payments/{{directPaymentReference}}/refund"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP one of [200, 409]\", function () { pm.expect(pm.response.code).to.be.oneOf([200, 409]); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "admin",
+          "item": [
+            {
+              "name": "Outbox events (FAILED)",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{gatewayUrl}}/api/payments/admin/outbox?status=FAILED"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                      "const l = pm.response.json();",
+                      "// Only a FAILED event can be retried; with none, the next request is skipped.",
+                      "if (l.length) { pm.environment.set(\"outboxId\", l[0].id); } else { pm.environment.unset(\"outboxId\"); }"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Retry outbox event",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{gatewayUrl}}/api/payments/admin/outbox/{{outboxId}}/retry"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });"
+                    ]
+                  }
+                },
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (!pm.environment.get('outboxId')) {",
+                      "  console.log('No FAILED outbox event (the normal case) - skipping retry request');",
+                      "  pm.execution.skipRequest();",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "description": "Direct payment calls - in the real flow only order-service calls payment-service (simulated gateway)."
+    },
+    {
+      "name": "notification-service",
+      "item": [
+        {
+          "name": "Notifications of customer",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/notifications?customerId={{customerId}}&page=0&size=20"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Notifications of order",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/api/notifications/order/{{orderNumber}}"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "admin (retry + DLT demo)",
+          "item": [
+            {
+              "name": "Get simulated failures",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{gatewayUrl}}/api/notifications/admin/simulated-failures"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "1. Set simulated failure for the DLT customer",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{gatewayUrl}}/api/notifications/admin/simulated-failures",
+                "description": "Notifications for these customers throw -> 3 retries -> <topic>.DLT -> stored as failed event.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"customerIds\": [\n    \"{{dltCustomerId}}\"\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });"
+                    ]
+                  }
+                },
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.environment.set('dltCustomerId', 'CUST-DLT-' + Date.now());"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "2. Place an order for the DLT customer (its notifications will fail)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{idempotencyKey}}"
+                  }
+                ],
+                "url": "{{gatewayUrl}}/api/orders/checkout",
+                "description": "Requires items in the cart of {{customerId}} (see cart-service folder).",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"customerId\": \"{{dltCustomerId}}\",\n  \"cardToken\": \"tok_visa\",\n  \"shippingAddress\": {\n    \"fullName\": \"Jane Doe\",\n    \"line1\": \"High Tech Campus 52\",\n    \"city\": \"Eindhoven\",\n    \"postalCode\": \"5656 AG\",\n    \"country\": \"NL\"\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.environment.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));",
+                      "// Make this request independent of folder order: put one item (product 2) in the cart first.",
+                      "pm.sendRequest({",
+                      "  url: pm.variables.replaceIn('{{gatewayUrl}}/api/carts/' + pm.environment.get('dltCustomerId') + '/items'),",
+                      "  method: 'POST',",
+                      "  header: { 'Content-Type': 'application/json' },",
+                      "  body: { mode: 'raw', raw: JSON.stringify({ productId: 2, quantity: 1 }) }",
+                      "}, function (err, res) { if (err || res.code !== 200) { console.warn('add-to-cart failed', err || res.code); } });"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 201\", function () { pm.response.to.have.status(201); });",
+                      "pm.environment.set(\"dltOrderNumber\", pm.response.json().orderNumber);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "3. Failed events (NEW) - after the retries the records are in the DLT",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{gatewayUrl}}/api/notifications/admin/failed-events?status=NEW"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "// 1 delivery + 3 retries with 1 s backoff, then the DLT listener stores the record: wait ~8 s.",
+                      "setTimeout(function () {}, 8000);"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                      "const mine = pm.response.json().filter(function (e) { return e.messageKey === pm.environment.get(\"dltOrderNumber\"); });",
+                      "pm.test(\"dead-lettered notification events recorded for the DLT order\", function () { pm.expect(mine.length).to.be.above(0); });",
+                      "if (mine.length) { pm.environment.set(\"failedEventId\", mine[0].id); }"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "4. Clear simulated failures (the cause is fixed)",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{gatewayUrl}}/api/notifications/admin/simulated-failures",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"customerIds\": []\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "5. Replay the failed event",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{gatewayUrl}}/api/notifications/admin/failed-events/{{failedEventId}}/replay"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                      "pm.test(\"status REPLAYED\", function () { pm.expect(pm.response.json().status).to.eql(\"REPLAYED\"); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "6. Notification delivered after the replay",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{gatewayUrl}}/api/notifications/order/{{dltOrderNumber}}"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "setTimeout(function () {}, 3000);"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                      "pm.test(\"at least one notification now stored\", function () { pm.expect(pm.response.json().length).to.be.above(0); });"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "7. Failed events (REPLAYED)",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{gatewayUrl}}/api/notifications/admin/failed-events?status=REPLAYED"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Actuator / Eureka",
+      "item": [
+        {
+          "name": "Gateway health",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/actuator/health"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                  "pm.test(\"UP\", function () { pm.expect(pm.response.json().status).to.eql(\"UP\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Eureka registered apps",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "http://localhost:8761/eureka/apps",
+            "description": "Direct call to discovery-server (not routed through the gateway)."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+                  "const names = pm.response.json().applications.application.map(a => a.name);",
+                  "pm.test(\"all 7 apps registered\", function () {",
+                  "  [\"API-GATEWAY\",\"PRODUCT-SERVICE\",\"INVENTORY-SERVICE\",\"CART-SERVICE\",\"ORDER-SERVICE\",\"PAYMENT-SERVICE\",\"NOTIFICATION-SERVICE\"]",
+                  "    .forEach(n => pm.expect(names).to.include(n));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
