@@ -16,14 +16,17 @@ import javax.validation.constraints.NotNull;
 @AllArgsConstructor
 public class AddCartItemRequest {
 
-    @NotNull
-    @Schema(example = "1")
-    private Long productId;
+	@NotNull
+	@Schema(example = "1")
+	private Long productId;
 
-    /** Quantity to ADD to the line (the resulting line total is limited to 10 by the service). */
-    @NotNull
-    @Min(1)
-    @Max(10)
-    @Schema(example = "2")
-    private Integer quantity;
+	/**
+	 * Quantity to ADD to the line (the resulting line total is limited to 10 by the
+	 * service).
+	 */
+	@NotNull
+	@Min(1)
+	@Max(10)
+	@Schema(example = "2")
+	private Integer quantity;
 }

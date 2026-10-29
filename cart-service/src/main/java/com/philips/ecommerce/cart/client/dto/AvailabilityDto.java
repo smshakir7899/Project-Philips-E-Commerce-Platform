@@ -13,8 +13,8 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class AvailabilityDto {
-    private Long productId;
-    private int requestedQuantity;
-    private int availableQuantity;
-    private boolean available;
+	private Long productId;
+	private int requestedQuantity;
+	private int availableQuantity;
+	private boolean available;
 }

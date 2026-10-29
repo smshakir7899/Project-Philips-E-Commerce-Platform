@@ -16,13 +16,13 @@ import java.util.List;
 @AllArgsConstructor
 @Schema(description = "A customer's cart; an empty cart is returned when none exists")
 public class CartResponse {
-    @Schema(example = "CUST-1001")
-    private String customerId;
-    private List<CartItemResponse> items;
-    private int totalQuantity;
-    @Schema(example = "659.98")
-    private BigDecimal subtotal;
-    @Schema(example = "EUR")
-    private String currency;
-    private Instant updatedAt;
+	@Schema(example = "CUST-1001")
+	private String customerId;
+	private List<CartItemResponse> items;
+	private int totalQuantity;
+	@Schema(example = "659.98")
+	private BigDecimal subtotal;
+	@Schema(example = "EUR")
+	private String currency;
+	private Instant updatedAt;
 }

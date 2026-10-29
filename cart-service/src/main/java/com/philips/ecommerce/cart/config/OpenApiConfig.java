@@ -9,11 +9,9 @@ import org.springframework.context.annotation.Configuration;
 @Configuration(proxyBeanMethods = false)
 public class OpenApiConfig {
 
-    @Bean
-    public OpenAPI cartOpenApi() {
-        return new OpenAPI().info(new Info()
-                .title("Cart Service API")
-                .version("1.0.0")
-                .description("Customer shopping carts with price snapshots, quantity limits and stock checks."));
-    }
+	@Bean
+	public OpenAPI cartOpenApi() {
+		return new OpenAPI().info(new Info().title("Cart Service API").version("1.0.0")
+				.description("Customer shopping carts with price snapshots, quantity limits and stock checks."));
+	}
 }

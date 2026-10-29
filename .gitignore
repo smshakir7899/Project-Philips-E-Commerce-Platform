@@ -38,3 +38,4 @@ verify-report-*.txt
 # your own benchmark runs (the measured reference runs live in perf/results-reference/)
 perf/results/
 .scannerwork/
+/.metadata/

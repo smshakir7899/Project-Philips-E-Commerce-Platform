@@ -81,7 +81,7 @@ services:
       - --default-time-zone=+00:00
       - --max-connections=300          # 6 services x Hikari max 10 (+ IDE/perf tools)
       - --innodb-buffer-pool-size=256M
-    ports: ["3306:3306"]
+    ports: ["3307:3306"]
     volumes:
       - mysql-data:/var/lib/mysql
       # Runs only on first start with an empty volume: creates the philips_* schemas.
@@ -226,7 +226,7 @@ services:
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
       DYNAMIC_CONFIG_ENABLED: "false"
       JAVA_OPTS: "-Xms64m -Xmx256m"
-    ports: ["8090:8080"]           # UI: http://localhost:8090
+    ports: ["8091:8080"]           # UI: http://localhost:8090
     mem_limit: 384m
     networks: [philips-net]
 

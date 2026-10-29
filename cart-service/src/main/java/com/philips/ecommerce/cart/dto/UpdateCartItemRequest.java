@@ -16,10 +16,10 @@ import javax.validation.constraints.NotNull;
 @AllArgsConstructor
 public class UpdateCartItemRequest {
 
-    /** New absolute quantity of the line. */
-    @NotNull
-    @Min(1)
-    @Max(10)
-    @Schema(example = "3")
-    private Integer quantity;
+	/** New absolute quantity of the line. */
+	@NotNull
+	@Min(1)
+	@Max(10)
+	@Schema(example = "3")
+	private Integer quantity;
 }

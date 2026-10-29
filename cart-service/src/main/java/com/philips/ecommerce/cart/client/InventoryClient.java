@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 @FeignClient(name = "inventory-service")
 public interface InventoryClient {
 
-    @GetMapping("/api/inventory/{productId}/availability")
-    AvailabilityDto checkAvailability(@PathVariable("productId") Long productId,
-                                      @RequestParam("quantity") int quantity);
+	@GetMapping("/api/inventory/{productId}/availability")
+	AvailabilityDto checkAvailability(@PathVariable("productId") Long productId,
+			@RequestParam("quantity") int quantity);
 }
